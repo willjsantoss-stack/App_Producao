@@ -26,13 +26,14 @@ for p in [LOGO_DIR, PASTA_FOTOS]:
 # ==========================================
 # 2. BANCO DE DADOS (SUPABASE POSTGRESQL)
 # ==========================================
-# COLOQUE A SUA SENHA ABAIXO (Se tiver o símbolo @ na senha, troque por %40)
-DATABASE_URL = "postgresql://postgres.qwehtwqazhensfkylqex:WeVLucy%40@aws-0-us-west-2.pooler.supabase.com:5432/postgres"
+# 2. BANCO DE DADOS (SUPABASE POSTGRESQL)
+# Busca a senha nas Secrets do Streamlit Cloud
+DATABASE_URL = st.secrets["DATABASE_URL"]
 
-# Engine para as integrações com o Pandas (Dashboards)
+# Engine para as integrações com o Pandas
 engine = create_engine(DATABASE_URL)
 
-# Conexão direta para salvar e deletar dados rapidamente
+# Conexão direta
 conn = psycopg2.connect(DATABASE_URL)
 conn.autocommit = False # Controlamos os commits manualmente por segurança
 cursor = conn.cursor()
