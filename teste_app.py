@@ -24,47 +24,20 @@ for p in [LOGO_DIR, PASTA_FOTOS]:
     if not os.path.exists(p): os.makedirs(p)
 
 # ==========================================
-# 2. BANCO DE DADOS (CONFIGURAÇÃO CORRETA)
+# 2. BANCO DE DADOS (VERSÃO DE DIAGNÓSTICO)
 # ==========================================
-import psycopg2
-import streamlit as st
-
-# URL de conexão
-DB_URL = "postgresql://postgres:WeV_Lucy_2025@db.qwehtwqazhensfkylqex.supabase.co:5432/postgres"
+# Adicionamos ?connect_timeout=10 no final da URL para evitar travamentos
+DB_URL = "postgresql://postgres:WeV_Lucy_2025@db.qwehtwqazhensfkylqex.supabase.co:5432/postgres?connect_timeout=10"
 
 def get_db_connection():
-    # Cria uma conexão nova
-    conn = psycopg2.connect(DB_URL)
-    return conn
-
-def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Lista de todas as suas tabelas
-    queries = [
-        'CREATE TABLE IF NOT EXISTS apontamentos (id SERIAL PRIMARY KEY, data_registro TEXT, matricula TEXT, operador TEXT, so TEXT, customer TEXT, wo TEXT, product_name TEXT, unidade TEXT, atividade TEXT, tipo TEXT, tipo_erro TEXT, causador_erro TEXT, hora_inicio TEXT, hora_fim TEXT, horas_normais NUMERIC, he_50 NUMERIC, he_100 NUMERIC, descricao TEXT, foto_path TEXT, foto_depois_path TEXT, saldo_bh NUMERIC DEFAULT 0.0)',
-        'CREATE TABLE IF NOT EXISTS colaboradores (matricula TEXT PRIMARY KEY, nome TEXT, linha TEXT, data_admissao TEXT, data_demissao TEXT)',
-        'CREATE TABLE IF NOT EXISTS projetos (so TEXT, wo TEXT, customer TEXT, item TEXT, product_name TEXT, qtde INTEGER, status_producao TEXT, horas_vendidas NUMERIC, linha TEXT)',
-        'CREATE TABLE IF NOT EXISTS tipos_erro (erro TEXT PRIMARY KEY)',
-        'CREATE TABLE IF NOT EXISTS causadores_erro (causador TEXT PRIMARY KEY)',
-        'CREATE TABLE IF NOT EXISTS categorias_parada (categoria TEXT PRIMARY KEY)',
-        'CREATE TABLE IF NOT EXISTS calendario_lucy (week TEXT PRIMARY KEY, start_date TEXT, end_date TEXT, std_month TEXT, lucy_month TEXT)',
-        'CREATE TABLE IF NOT EXISTS feriados (data TEXT PRIMARY KEY, descricao TEXT)',
-        'CREATE TABLE IF NOT EXISTS ferias_colaboradores (id SERIAL PRIMARY KEY, matricula TEXT, data_inicio TEXT, data_fim TEXT)',
-        'CREATE TABLE IF NOT EXISTS banco_horas_log (id SERIAL PRIMARY KEY, matricula TEXT, data TEXT, horas_delta NUMERIC, operacao TEXT, justificativa TEXT)',
-        'CREATE TABLE IF NOT EXISTS parametros_jornada (id SERIAL PRIMARY KEY, data_inicio TEXT, data_fim TEXT, carga_seg_qui NUMERIC, carga_sexta NUMERIC, hora_saida_seg_qui TEXT, hora_saida_sexta TEXT)',
-        'CREATE TABLE IF NOT EXISTS planejamento (id SERIAL PRIMARY KEY, data_planejada TEXT, matricula TEXT, so TEXT, wo TEXT, unidade TEXT DEFAULT "Geral", horas_planejadas NUMERIC)'
-    ]
-    
-    for q in queries:
-        cursor.execute(q)
-    
-    # IMPORTANTE: commit salva as tabelas no banco
-    conn.commit()
-    cursor.close()
-    conn.close()
-    st.success("Tabelas verificadas com sucesso!")
+    try:
+        # Tenta conectar com um limite de tempo de 10 segundos
+        conn = psycopg2.connect(DB_URL)
+        return conn
+    except Exception as e:
+        # Isso vai imprimir o erro REAL na tela e não a mensagem "redacted"
+        st.error(f"ERRO REAL DE CONEXÃO: {e}")
+        st.stop()
 
 # Executa a criação apenas se não existir
 if 'db_initialized' not in st.session_state:
