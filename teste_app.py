@@ -26,25 +26,20 @@ for p in [LOGO_DIR, PASTA_FOTOS]:
 # ==========================================
 # 2. BANCO DE DADOS (SUPABASE POSTGRESQL)
 # ==========================================
-try:
-    # Tenta ler das Secrets do Streamlit Cloud
-    DATABASE_URL = st.secrets["DATABASE_URL"]
-except:
-    # Fallback para o seu ambiente local (se necessário)
-    DATABASE_URL = "postgresql://postgres:WeV_Lucy_2025@db.qwehtwqazhensfkylqex.supabase.co:5432/postgres"
-    
-# Engine para as integrações com o Pandas
-engine = create_engine(DATABASE_URL)
+import streamlit as st
+import socket
 
-# Conexão direta - Usando try/except para capturar o erro exato
+st.write("### Teste de Diagnóstico de Rede")
+
+host_para_testar = "db.qwehtwqazhensfkylqex.supabase.co"
+
 try:
-    conn = psycopg2.connect(DATABASE_URL)
-    conn.autocommit = False
-    cursor = conn.cursor()
+    ip = socket.gethostbyname(host_para_testar)
+    st.success(f"Conexão DNS funcionando! O endereço foi resolvido para o IP: {ip}")
 except Exception as e:
-    st.error(f"Erro ao conectar ao banco: {e}")
-    st.stop()
-
+    st.error(f"O Streamlit Cloud não consegue localizar o servidor. Erro: {e}")
+    st.info("Isso confirma que o problema é de rede, não de senha ou string.")
+    
 st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
