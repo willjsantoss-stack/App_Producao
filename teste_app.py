@@ -26,14 +26,14 @@ for p in [LOGO_DIR, PASTA_FOTOS]:
 # ==========================================
 # 2. BANCO DE DADOS (CORREÇÃO DEFINITIVA)
 # ==========================================
-DB_URL = "postgresql://postgres:WeV_Lucy_2025@db.qwehtwqazhensfkylqex.supabase.co:5432/postgres"
+DATABASE_URL = "postgresql://postgres:WeV_Lucy_2025@db.qwehtwqazhensfkylqex.supabase.co:5432/postgres"
 
 # Engine para o Pandas (Usado nos DataFrames e abas de exportação)
-engine = create_engine(DB_URL)
+engine = create_engine(DATABASE_URL)
 
 # Conexão global e cursor para o resto do app (essencial para as suas funções abaixo)
 try:
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(DATABASE_URL)
     conn.autocommit = False
     cursor = conn.cursor()
 except Exception as e:
