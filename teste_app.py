@@ -26,17 +26,24 @@ for p in [LOGO_DIR, PASTA_FOTOS]:
 # ==========================================
 # 2. BANCO DE DADOS (SUPABASE POSTGRESQL)
 # ==========================================
-# 2. BANCO DE DADOS (SUPABASE POSTGRESQL)
-# Busca a senha nas Secrets do Streamlit Cloud
-DATABASE_URL = st.secrets["DATABASE_URL"]
+try:
+    # Tenta ler das Secrets do Streamlit Cloud
+    DATABASE_URL = st.secrets["DATABASE_URL"]
+except:
+    # Fallback para o seu ambiente local (se necessário)
+    DATABASE_URL = "postgresql://postgres.qwehtwqazhensfkylqex:SuaSenha%40Aqui@aws-0-us-west-2.pooler.supabase.com:5432/postgres"
 
 # Engine para as integrações com o Pandas
 engine = create_engine(DATABASE_URL)
 
-# Conexão direta
-conn = psycopg2.connect(DATABASE_URL)
-conn.autocommit = False # Controlamos os commits manualmente por segurança
-cursor = conn.cursor()
+# Conexão direta - Usando try/except para capturar o erro exato
+try:
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = False
+    cursor = conn.cursor()
+except Exception as e:
+    st.error(f"Erro ao conectar ao banco: {e}")
+    st.stop()
 
 st.markdown("""
     <style>
