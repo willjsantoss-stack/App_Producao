@@ -31,7 +31,7 @@ try:
     DATABASE_URL = st.secrets["DATABASE_URL"]
 except:
     # Fallback para o seu ambiente local (se necessário)
-    DATABASE_URL = "postgresql://postgres.qwehtwqazhensfkylqex:WeVLucy%402020@aws-0-us-west-2.pooler.supabase.com:5432/postgres"
+    DATABASE_URL = "postgresql://postgres:WeV_Lucy_2020@db.qwehtwqazhensfkylqex.supabase.co:5432/postgres"
 
 # Engine para as integrações com o Pandas
 engine = create_engine(DATABASE_URL)
