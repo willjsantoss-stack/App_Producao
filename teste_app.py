@@ -24,21 +24,24 @@ for p in [LOGO_DIR, PASTA_FOTOS]:
     if not os.path.exists(p): os.makedirs(p)
 
 # ==========================================
-# 2. BANCO DE DADOS (SUPABASE POSTGRESQL)
+# 2. BANCO DE DADOS (TESTE DIRETO)
 # ==========================================
-import streamlit as st
-import socket
+import psycopg2
 
-st.write("### Teste de Diagnóstico de Rede")
-
-host_para_testar = "db.qwehtwqazhensfkylqex.supabase.co"
+# Coloquei a URL diretamente aqui, sem usar st.secrets
+# Substitua WeV_Lucy_2025 pela sua senha real
+db_url = "postgresql://postgres:WeV_Lucy_2025@db.qwehtwqazhensfkylqex.supabase.co:5432/postgres"
 
 try:
-    ip = socket.gethostbyname(host_para_testar)
-    st.success(f"Conexão DNS funcionando! O endereço foi resolvido para o IP: {ip}")
+    conn = psycopg2.connect(db_url)
+    conn.autocommit = False
+    cursor = conn.cursor()
+    st.success("Conexão estabelecida com sucesso!")
+    # Fecha conexão para não travar
+    cursor.close()
+    conn.close()
 except Exception as e:
-    st.error(f"O Streamlit Cloud não consegue localizar o servidor. Erro: {e}")
-    st.info("Isso confirma que o problema é de rede, não de senha ou string.")
+    st.error(f"Erro ao conectar ao banco: {e}")
     
 st.markdown("""
     <style>
