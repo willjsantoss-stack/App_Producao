@@ -30,7 +30,7 @@ import psycopg2
 
 # Coloquei a URL diretamente aqui, sem usar st.secrets
 # Substitua WeV_Lucy_2025 pela sua senha real
-db_url = "postgresql://postgres:WeV_Lucy_2025@db.qwehtwqazhensfkylqex.supabase.co:5432/postgres"
+db_url = "postgresql://postgres.qwehtwqazhensfkylqex:WeV_Lucy_2025@aws-1-us-west-2.pooler.supabase.com:6543/postgres"
 
 try:
     conn = psycopg2.connect(db_url)
