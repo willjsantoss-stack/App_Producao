@@ -338,10 +338,10 @@ with st.sidebar:
         tipo_ext = st.radio("Período:", ["Mês Atual", "Mês Anterior", "Semana Atual"])
         
         df_ponto = pd.read_sql_query("""
-            SELECT data_registro as Data, matricula as Matricula, operador as Operador, hora_inicio as Inicio, hora_fim as Fim, 
+            SELECT data_registro as "Data", matricula as "Matricula", operador as "Operador", hora_inicio as "Inicio", hora_fim as "Fim", 
                    horas_normais as "Normais(h)", he_50 as "HE50(h)", he_100 as "HE100(h)", saldo_bh as "Banco(h)",
-                   tipo as Tipo, atividade as Atividade, so as SO, customer as Cliente, wo as WO, product_name as Produto, 
-                   unidade as Unidade, descricao as Observacoes
+                   tipo as "Tipo", atividade as "Atividade", so as "SO", customer as "Cliente", wo as "WO", product_name as "Produto", 
+                   unidade as "Unidade", descricao as "Observacoes"
             FROM apontamentos
         """, engine)
         
