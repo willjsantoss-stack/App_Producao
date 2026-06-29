@@ -27,7 +27,7 @@ for p in [LOGO_DIR, PASTA_FOTOS]:
 # 2. BANCO DE DADOS (SUPABASE POSTGRESQL)
 # ==========================================
 # COLOQUE A SUA SENHA ABAIXO (Se tiver o símbolo @ na senha, troque por %40)
-DATABASE_URL = "postgresql://postgres.qwehtwqazhensfkylqex:SUA_SENHA_AQUI@aws-0-us-west-2.pooler.supabase.com:5432/postgres"
+DATABASE_URL = "postgresql://postgres.qwehtwqazhensfkylqex:WeVLucy%40@aws-0-us-west-2.pooler.supabase.com:5432/postgres"
 
 # Engine para as integrações com o Pandas (Dashboards)
 engine = create_engine(DATABASE_URL)
