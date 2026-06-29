@@ -26,14 +26,15 @@ for p in [LOGO_DIR, PASTA_FOTOS]:
 # ==========================================
 # 2. BANCO DE DADOS (CORREÇÃO DEFINITIVA)
 # ==========================================
-DATABASE_URL = "postgresql://postgres:WeV_Lucy_2025@db.qwehtwqazhensfkylqex.supabase.co:5432/postgres"
+# Agora o aplicativo vai ler a URL correta e estável do seu painel de Secrets
+DB_URL = st.secrets["DATABASE_URL"]
 
 # Engine para o Pandas (Usado nos DataFrames e abas de exportação)
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DB_URL)
 
 # Conexão global e cursor para o resto do app (essencial para as suas funções abaixo)
 try:
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg2.connect(DB_URL)
     conn.autocommit = False
     cursor = conn.cursor()
 except Exception as e:
