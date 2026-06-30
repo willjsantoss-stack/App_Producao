@@ -338,11 +338,13 @@ with st.sidebar:
         tipo_ext = st.radio("Período:", ["Mês Atual", "Mês Anterior", "Semana Atual"])
         
         df_ponto = pd.read_sql_query("""
-            SELECT data_registro as "Data", matricula as "Matricula", operador as "Operador", hora_inicio as "Inicio", hora_fim as "Fim", 
-                   horas_normais as "Normais(h)", he_50 as "HE50(h)", he_100 as "HE100(h)", saldo_bh as "Banco(h)",
-                   tipo as "Tipo", atividade as "Atividade", so as "SO", customer as "Cliente", wo as "WO", product_name as "Produto", 
-                   unidade as "Unidade", descricao as "Observacoes"
-            FROM apontamentos
+            SELECT a.data_registro as "Data", a.matricula as "Matricula", a.operador as "Operador", 
+                   COALESCE(a.linha, c.linha) as "Linha Atuação", a.hora_inicio as "Inicio", a.hora_fim as "Fim", 
+                   a.horas_normais as "Normais(h)", a.he_50 as "HE50(h)", a.he_100 as "HE100(h)", a.saldo_bh as "Banco(h)",
+                   a.tipo as "Tipo", a.atividade as "Atividade", a.so as "SO", a.customer as "Cliente", a.wo as "WO", a.product_name as "Produto", 
+                   a.unidade as "Unidade", a.descricao as "Observacoes"
+            FROM apontamentos a
+            LEFT JOIN colaboradores c ON a.matricula = c.matricula
         """, engine)
         
         df_ponto['data_dt'] = pd.to_datetime(df_ponto['Data'], format='%d/%m/%Y', errors='coerce')
@@ -675,9 +677,9 @@ with tab_lancamento:
                         for i, (_, row_op) in enumerate(ops_afetados.iterrows()):
                             resolver_sobreposicoes(conn, row_op['matricula'], data_br_lote, hi_lote, hf_lote, data_lote)
                             
-                            cursor.execute('''INSERT INTO apontamentos (data_registro, matricula, operador, so, customer, wo, product_name, unidade, atividade, tipo, tipo_erro, causador_erro, hora_inicio, hora_fim, horas_normais, he_50, he_100, saldo_bh, descricao, foto_path, foto_depois_path) 
-                                              VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,0,0,0,0,%s,%s,%s)''',
-                                           (data_br_lote, row_op['matricula'], row_op['nome'], "N/A", "N/A", "N/A", "N/A", "Geral", "Banco de Horas", "Falta/Atraso", "N/A", "N/A", str(hi_lote), str(hf_lote), motivo_lote, "", ""))
+                            cursor.execute('''INSERT INTO apontamentos (data_registro, matricula, operador, linha, so, customer, wo, product_name, unidade, atividade, tipo, tipo_erro, causador_erro, hora_inicio, hora_fim, horas_normais, he_50, he_100, saldo_bh, descricao, foto_path, foto_depois_path) 
+                                              VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,0,0,0,0,%s,%s,%s)''',
+                                           (data_br_lote, row_op['matricula'], row_op['nome'], row_op['linha'], "N/A", "N/A", "N/A", "N/A", "Geral", "Banco de Horas", "Falta/Atraso", "N/A", "N/A", str(hi_lote), str(hf_lote), motivo_lote, "", ""))
                             conn.commit()
                             
                             registrar_evento_banco(row_op['matricula'], data_br_lote, -round(horas_desconto, 2), "DEBITO_LOTE", motivo_lote)
