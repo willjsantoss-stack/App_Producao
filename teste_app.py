@@ -2443,3 +2443,4 @@ with tab_pdf:
                     st.error("❌ A biblioteca FPDF não está instalada. Abra o terminal e execute: pip install fpdf")
                 except Exception as e:
                     st.error(f"❌ Ocorreu um erro técnico na geração do documento: {e}")
+# Teste de conexão com o GitHub
