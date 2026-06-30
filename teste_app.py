@@ -42,7 +42,11 @@ except Exception as e:
     st.stop()
 
 # Função que empacota a criação das tabelas para não dar o NameError
+# Função que empacota a criação das tabelas para não dar o NameError
 def init_db():
+    # ⚡ MÁGICA AQUI: Ativa o processamento isolado para o banco não travar!
+    conn.autocommit = True 
+
     # Verificação inicial da Estrutura das Tabelas
     cursor.execute('CREATE TABLE IF NOT EXISTS apontamentos (id SERIAL PRIMARY KEY, data_registro TEXT, matricula TEXT, operador TEXT, so TEXT, customer TEXT, wo TEXT, product_name TEXT, unidade TEXT, atividade TEXT, tipo TEXT, tipo_erro TEXT, causador_erro TEXT, hora_inicio TEXT, hora_fim TEXT, horas_normais NUMERIC, he_50 NUMERIC, he_100 NUMERIC, descricao TEXT, foto_path TEXT, foto_depois_path TEXT, saldo_bh NUMERIC DEFAULT 0.0)')
     cursor.execute('CREATE TABLE IF NOT EXISTS colaboradores (matricula TEXT PRIMARY KEY, nome TEXT, linha TEXT, data_admissao TEXT, data_demissao TEXT)')
@@ -89,7 +93,8 @@ def init_db():
         try: cursor.execute("ALTER TABLE planejamento ADD COLUMN unidade TEXT DEFAULT 'Geral'")
         except: pass
         
-    conn.commit()
+    # ⚡ Desativa a mágica para o resto do app funcionar com a segurança padrão
+    conn.autocommit = False
 
 # Executa a criação das tabelas apenas se não existir
 if 'db_initialized' not in st.session_state:
