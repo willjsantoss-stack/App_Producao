@@ -21,7 +21,7 @@ LOGO_DIR = os.path.join(BASE_DIR, 'Logo_Lucy')
 PASTA_FOTOS = os.path.join(BASE_DIR, "Fotos_Retrabalho")
 
 for p in [LOGO_DIR, PASTA_FOTOS]:
-    if not os.path.exists(p): os.makedirs(p)
+    os.makedirs(p, exist_ok=True)
 
 # ==========================================
 # 2. BANCO DE DADOS (CORREÇÃO DEFINITIVA)
