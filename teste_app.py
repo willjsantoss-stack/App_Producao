@@ -65,7 +65,7 @@ def init_db():
     # Verificações de migração de colunas para PostgreSQL
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'apontamentos'")
     col_db = [c[0] for c in cursor.fetchall()]
-    for col in ['customer', 'tipo_erro', 'causador_erro', 'so', 'product_name', 'foto_path', 'foto_depois_path', 'saldo_bh']:
+    for col in ['customer', 'tipo_erro', 'causador_erro', 'so', 'product_name', 'foto_path', 'foto_depois_path', 'saldo_bh', 'linha']:
         if col not in col_db: 
             try: 
                 if col == 'saldo_bh':
@@ -446,11 +446,21 @@ with tab_lancamento:
             col1, col2 = st.columns(2)
             with col1:
                 linha_colab = "N/A"
+                linhas_disponiveis = df_colab['linha'].dropna().unique().tolist()
+                
                 if colab_sel != "- Selecione -":
                     mat_selecionada = colab_sel.split(" - ")[0]
                     resultado_linha = df_colab[df_colab['matricula'] == mat_selecionada]['linha'].iloc[0]
                     if pd.notna(resultado_linha) and str(resultado_linha).strip() != "":
                         linha_colab = resultado_linha
+
+                # NOVO: Campo visível para o líder alterar a linha real de trabalho
+                linha_apontamento = st.selectbox(
+                    "🏭 Linha de Atuação (Neste Apontamento)", 
+                    options=["- Selecione -"] + linhas_disponiveis,
+                    index=linhas_disponiveis.index(linha_colab) + 1 if linha_colab in linhas_disponiveis else 0,
+                    help="O sistema sugere a linha de RH do operador, mas pode alterá-la caso ele esteja a cobrir outro setor."
+                )
 
                 if tipo_ap in ["Produção Normal", "Retrabalho", "Parada"]:
                     if tipo_ap == "Produção Normal":
@@ -589,9 +599,10 @@ with tab_lancamento:
                         
                         resolver_sobreposicoes(conn, mat_validar, data_br, hi, hf, data_lan)
                         
-                        cursor.execute('''INSERT INTO apontamentos (data_registro, matricula, operador, so, customer, wo, product_name, unidade, atividade, tipo, tipo_erro, causador_erro, hora_inicio, hora_fim, horas_normais, he_50, he_100, saldo_bh, descricao, foto_path, foto_depois_path) 
-                                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,0,0,0,0,%s,%s,%s)''',
-                                       (data_br, mat_validar, colab_sel.split(" - ")[1], so_id_db, cliente_val, wo_id_db, prod_name_val, unidade_sel, atividade, tipo_ap, t_erro, c_erro, str(hi), str(hf), obs, path_f_antes, path_f_depois))
+                        linha_salvar = linha_apontamento if linha_apontamento != "- Selecione -" else linha_colab
+                        cursor.execute('''INSERT INTO apontamentos (data_registro, matricula, operador, linha, so, customer, wo, product_name, unidade, atividade, tipo, tipo_erro, causador_erro, hora_inicio, hora_fim, horas_normais, he_50, he_100, saldo_bh, descricao, foto_path, foto_depois_path) 
+                                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,0,0,0,0,%s,%s,%s)''',
+                                       (data_br, mat_validar, colab_sel.split(" - ")[1], linha_salvar, so_id_db, cliente_val, wo_id_db, prod_name_val, unidade_sel, atividade, tipo_ap, t_erro, c_erro, str(hi), str(hf), obs, path_f_antes, path_f_depois))
                         conn.commit()
                         
                         if data_lan.weekday() == 5:
@@ -881,14 +892,14 @@ with tab_dash_proj:
     
     df_linhas_ven = pd.read_sql_query("SELECT linha, SUM(horas_vendidas) as vendidas FROM projetos WHERE so = %(so)s AND linha IS NOT NULL AND TRIM(linha) != '' AND linha != 'None' GROUP BY linha", engine, params={"so": so_dash_clean})
     df_linhas_cons = pd.read_sql_query("""
-        SELECT c.linha, 
+        SELECT COALESCE(a.linha, c.linha) as linha, 
                SUM(CASE WHEN a.tipo = 'Produção Normal' THEN a.horas_normais + a.he_50 + a.he_100 ELSE 0 END) as consumo_prod,
                SUM(CASE WHEN a.tipo IN ('Retrabalho', 'Parada') THEN a.horas_normais + a.he_50 + a.he_100 ELSE 0 END) as consumo_perdas
         FROM apontamentos a 
         LEFT JOIN colaboradores c ON a.matricula = c.matricula
         WHERE a.so = %(so)s AND a.tipo IN ('Produção Normal', 'Retrabalho', 'Parada') 
-        AND c.linha IS NOT NULL AND TRIM(c.linha) != '' AND c.linha != 'None'
-        GROUP BY c.linha
+        AND COALESCE(a.linha, c.linha) IS NOT NULL AND TRIM(COALESCE(a.linha, c.linha)) != '' AND COALESCE(a.linha, c.linha) != 'None'
+        GROUP BY COALESCE(a.linha, c.linha)
     """, engine, params={"so": so_dash_clean})
     
     if not df_linhas_ven.empty:
