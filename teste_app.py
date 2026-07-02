@@ -1152,15 +1152,47 @@ with tab_dash_rh:
         df_ap_all['data_dt'] = pd.to_datetime(df_ap_all['data_registro'], format='%d/%m/%Y', errors='coerce')
         df_ap_rh = df_ap_all[(df_ap_all['data_dt'].dt.date >= data_ini_rh) & (df_ap_all['data_dt'].dt.date <= data_fim_rh)].copy()
         
-        df_ap_rh['total_horas'] = df_ap_rh['horas_normais'] + df_ap_rh['he_50'] + df_ap_rh['he_100'] + df_ap_rh['saldo_bh'].abs()
+        # --- CORREÇÃO DO BANCO DE HORAS ---
+        def get_horas_efetivas_dia(r):
+            if r['tipo'] == 'Atestado / Justificada' and 'Banco de Horas' not in str(r['atividade']):
+                return r['horas_normais']
+            elif r['tipo'] == 'Falta/Atraso' or 'Banco de Horas' in str(r['atividade']):
+                return 0.0
+            else:
+                return r['horas_normais'] + r['he_50'] + r['he_100'] + max(0, float(r['saldo_bh'] or 0))
+
+        df_ap_rh['total_horas'] = df_ap_rh.apply(get_horas_efetivas_dia, axis=1)
+        # -----------------------------------
         
         apont_dict = {}
         for _, r in df_ap_rh.groupby(['operador', 'data_registro'])['total_horas'].sum().reset_index().iterrows():
             apont_dict[(r['operador'], r['data_registro'])] = r['total_horas']
-            
+        
+        # --- OTIMIZAÇÃO DE PERFORMANCE (PASSO 2) ---
+        df_params = pd.read_sql_query("SELECT data_inicio, data_fim, carga_seg_qui, carga_sexta FROM parametros_jornada ORDER BY data_inicio DESC", engine)
+
+        def get_carga_rapida(data_ref):
+            d_str = data_ref.strftime('%Y-%m-%d')
+            for _, r in df_params.iterrows():
+                d_ini = r['data_inicio']
+                d_fim = r['data_fim']
+                if d_ini <= d_str and (pd.isna(d_fim) or d_fim is None or str(d_fim) == '' or str(d_fim) >= d_str):
+                    return float(r['carga_seg_qui']), float(r['carga_sexta'])
+            return 8.17, 6.25 
+
+        ferias_set = set()
+        for _, vf in df_ferias_rh.iterrows():
+            mat_f = vf['matricula']
+            try:
+                start_f = pd.to_datetime(vf['data_inicio']).date()
+                end_f = pd.to_datetime(vf['data_fim']).date()
+                for i in range((end_f - start_f).days + 1):
+                    ferias_set.add((mat_f, start_f + timedelta(days=i)))
+            except: pass
+
         tabela_ponto = []
         dados_carga_rh = []
-        
+
         for _, colab in df_colab_rh.iterrows():
             d_adm = pd.to_datetime(colab['data_admissao'], format='%Y-%m-%d', errors='coerce').date() if pd.notna(colab['data_admissao']) and str(colab['data_admissao']).strip() != '' else date.min
             d_dem = pd.to_datetime(colab['data_demissao'], format='%Y-%m-%d', errors='coerce').date() if pd.notna(colab['data_demissao']) and str(colab['data_demissao']).strip() != '' else date.max
@@ -1181,21 +1213,13 @@ with tab_dash_rh:
                     linha_ponto[d_str_br_curto] = "-"
                     continue
                 
-                em_ferias = False
-                filtro_ferias = df_ferias_rh[df_ferias_rh['matricula'] == mat]
-                for _, vf in filtro_ferias.iterrows():
-                    try:
-                        if pd.to_datetime(vf['data_inicio']).date() <= d <= pd.to_datetime(vf['data_fim']).date():
-                            em_ferias = True
-                            break
-                    except: pass
-                    
+                em_ferias = (mat, d) in ferias_set
                 is_feriado = d_str_iso in feriados_bd or d.weekday() == 6
                 
                 if em_ferias or is_feriado:
                     meta = 0.0
                 else:
-                    c_sq, c_sx, _, _ = obter_parametros_dia(conn, d)
+                    c_sq, c_sx = get_carga_rapida(d) 
                     if d.weekday() <= 3: meta = c_sq
                     elif d.weekday() == 4: meta = c_sx
                     else: meta = 0.0
