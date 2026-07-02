@@ -1267,7 +1267,8 @@ with tab_dash_rh:
                 linha_ponto[d_str_br_curto] = round(saldo, 2)
                 
             tabela_ponto.append(linha_ponto)
-            dados_carga_rh.append({'operador': colab['nome'], 'capacidade': cap_mensal_operador})
+            # Adicionado a linha para permitir o cálculo correto por setor no absenteísmo
+            dados_carga_rh.append({'operador': colab['nome'], 'linha': colab['linha'], 'capacidade': cap_mensal_operador})
             
         df_ponto_final = pd.DataFrame(tabela_ponto)
         
@@ -1348,40 +1349,46 @@ with tab_dash_rh:
         col_rh_bot1, col_rh_bot2 = st.columns(2)
         
         with col_rh_bot1:
-            # 🤒 Absenteísmo da Fábrica
-            df_abs = pd.merge(df_ap_rh, df_colab_rh[['nome', 'linha']], left_on='operador', right_on='nome', how='left')
-
-            if not df_abs.empty:
+            st.markdown("### 🤒 Absenteísmo da Fábrica")
+            
+            if not df_ap_rh.empty and 'dados_carga_rh' in locals() and dados_carga_rh:
+                df_abs = pd.merge(df_ap_rh, df_colab_rh[['nome', 'linha']], left_on='operador', right_on='nome', how='left')
+                df_carga_abs = pd.DataFrame(dados_carga_rh)
+                
                 linhas_disp = ["- Todas as Linhas -"] + df_abs['linha'].dropna().unique().tolist()
                 linha_sel = st.selectbox("Filtro por Setor/Linha:", linhas_disp, key="sb_linha_rh_abs")
                 
                 if linha_sel != "- Todas as Linhas -":
                     df_abs = df_abs[df_abs['linha'] == linha_sel]
+                    df_carga_abs = df_carga_abs[df_carga_abs['linha'] == linha_sel]
                 
-                # 1. Isola Faltas Reais e Atestados (Ausência indesejada)
+                # 1. NUMERADOR: Atestados + Declarações + Faltas + Atrasos (Exclui Banco de Horas)
                 df_abs['is_ausencia'] = df_abs.apply(lambda r: r['tipo'] in ['Falta/Atraso', 'Atestado / Justificada'] and 'Banco de Horas' not in str(r['atividade']), axis=1)
                 total_ausencia = df_abs[df_abs['is_ausencia']]['horas_normais'].sum()
                 
-                # 2. Isola as folgas por Banco de Horas (Layoff / Dispensas)
+                # 2. BANCO DE HORAS: Horas que o colaborador foi dispensado para ficar em casa
                 df_abs['is_folga_bh'] = df_abs.apply(lambda r: 'Banco de Horas' in str(r['atividade']), axis=1)
                 total_folga_bh = df_abs[df_abs['is_folga_bh']]['horas_normais'].sum()
                 
-                # 3. Capacidade Real (Horas totais de disponibilidade MENOS o tempo que a empresa mandou o cara ficar em casa)
-                total_geral = df_abs['horas_normais'].sum() - total_folga_bh
+                # 3. HORAS DISPONÍVEIS: Capacidade nominal de contrato vinda dos parâmetros de jornada do mês
+                horas_disponiveis = df_carga_abs['capacidade'].sum()
                 
-                taxa_geral = (total_ausencia / total_geral * 100) if total_geral > 0 else 0.0
+                # 4. DENOMINADOR: Horas Disponíveis - Banco de Horas
+                denominador = horas_disponiveis - total_folga_bh
                 
-                if total_geral > 0:
-                    fig_pie = px.pie(names=['Horas Trabalhadas (Úteis)', 'Horas Ausentes (Absenteísmo Real)'], 
-                                    values=[max(0, total_geral - total_ausencia), total_ausencia],
+                taxa_geral = (total_ausencia / denominador * 100) if denominador > 0 else 0.0
+                
+                if denominador > 0:
+                    fig_pie = px.pie(names=['Disponibilidade Líquida', 'Ausências (Absenteísmo Real)'], 
+                                    values=[max(0, denominador - total_ausencia), total_ausencia],
                                     title=f"Taxa de Absenteísmo Real: {taxa_geral:.1f}%",
                                     color_discrete_sequence=['#28a745', '#dc3545'])
                     fig_pie.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
                     st.plotly_chart(fig_pie, use_container_width=True, key="pie_abs_rh")
                 else:
-                    st.info("Sem horas válidas para este filtro (apenas folgas ou sem apontamento).")
+                    st.info("Sem horas disponíveis líquidas para calcular o absenteísmo neste filtro.")
             else:
-                st.info("Sem dados de absenteísmo.")
+                st.info("Sem dados de capacidade ou apontamentos suficientes para gerar o gráfico.")
 
         with col_rh_bot2:
             st.markdown("### 🔍 Raio-X Individual do Colaborador")
