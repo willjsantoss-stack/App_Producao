@@ -166,6 +166,7 @@ def recalcular_dia(conn_db, matricula, data_br):
     is_sabado = data_ref.weekday() == 5
     is_100 = is_feriado or is_domingo
     
+    # Lógica de Sábado Alternado (Se trabalhou no último, este é o 2º consecutivo)
     is_sabado_consecutivo = False
     if is_sabado:
         sabado_anterior = (data_ref - timedelta(days=7)).strftime("%d/%m/%Y")
@@ -176,9 +177,16 @@ def recalcular_dia(conn_db, matricula, data_br):
     
     carga_sq, carga_sex, hs_sq, hs_sex = obter_parametros_dia(conn_db, data_ref)
     
-    if data_ref.weekday() <= 3: carga_diaria = carga_sq
-    elif data_ref.weekday() == 4: carga_diaria = carga_sex
-    else: carga_diaria = 0.0 
+    # ⚡ NOVAS REGRAS DE LIMITES DE BANCO DE HORAS
+    if data_ref.weekday() <= 3: 
+        carga_diaria = carga_sq
+        limite_bh_extra = 85 / 60.0 # 1h25m convertidos para decimal
+    elif data_ref.weekday() == 4: 
+        carga_diaria = carga_sex
+        limite_bh_extra = 3.5 # 3h30m convertidos para decimal
+    else: 
+        carga_diaria = 0.0 
+        limite_bh_extra = 0.0
         
     carga_restante = carga_diaria
     
@@ -200,12 +208,13 @@ def recalcular_dia(conn_db, matricula, data_br):
         elif is_sabado:
             if tipo not in ["Falta/Atraso", "Atestado / Justificada"]:
                 if is_sabado_consecutivo:
-                    e100 = round(net_h, 2)
+                    e100 = round(net_h, 2) # Sábado Consecutivo = Hora Extra (100% ou 50% dependendo do seu acordo, aqui joga pro HE integral)
                 else:
-                    s_bh = round(net_h, 2) 
+                    s_bh = round(net_h, 2) # Primeiro Sábado = Banco de Horas Total
             else:
                 n = round(net_h, 2)
         else: 
+            # Dias de Semana (Segunda a Sexta)
             if tipo in ["Falta/Atraso", "Atestado / Justificada"]:
                 if atividade and "Banco de Horas" in atividade:
                     n_calc = min(net_h, carga_restante)
@@ -217,10 +226,18 @@ def recalcular_dia(conn_db, matricula, data_br):
                     carga_restante -= n_calc
                     n = round(net_h, 2)
             else:
+                # SEPARAÇÃO AUTOMÁTICA (Regra de Negócio)
                 n_calc = min(net_h, carga_restante)
-                e50_calc = net_h - n_calc
+                extra_calc = net_h - n_calc
                 carga_restante -= n_calc
-                n, e50 = round(n_calc, 2), round(e50_calc, 2)
+                
+                n = round(n_calc, 2)
+                if extra_calc > 0:
+                    # Envia para BH até bater o limite, o que sobrar vira HE50
+                    bh_aplicado = min(extra_calc, limite_bh_extra)
+                    he50_aplicado = extra_calc - bh_aplicado
+                    s_bh = round(bh_aplicado, 2)
+                    e50 = round(he50_aplicado, 2)
             
         c.execute("UPDATE apontamentos SET horas_normais=%s, he_50=%s, he_100=%s, saldo_bh=%s WHERE id=%s", (n, e50, e100, s_bh, db_id))
     conn_db.commit()
@@ -1331,10 +1348,9 @@ with tab_dash_rh:
         col_rh_bot1, col_rh_bot2 = st.columns(2)
         
         with col_rh_bot1:
-            st.markdown("### 🤒 Absenteísmo da Fábrica")
-            
+            # 🤒 Absenteísmo da Fábrica
             df_abs = pd.merge(df_ap_rh, df_colab_rh[['nome', 'linha']], left_on='operador', right_on='nome', how='left')
-            
+
             if not df_abs.empty:
                 linhas_disp = ["- Todas as Linhas -"] + df_abs['linha'].dropna().unique().tolist()
                 linha_sel = st.selectbox("Filtro por Setor/Linha:", linhas_disp, key="sb_linha_rh_abs")
@@ -1342,21 +1358,28 @@ with tab_dash_rh:
                 if linha_sel != "- Todas as Linhas -":
                     df_abs = df_abs[df_abs['linha'] == linha_sel]
                 
-                df_abs['is_ausencia'] = df_abs.apply(lambda r: r['tipo'] in ['Falta/Atraso', 'Atestado / Justificada'] and r['atividade'] != 'Banco de Horas', axis=1)
+                # 1. Isola Faltas Reais e Atestados (Ausência indesejada)
+                df_abs['is_ausencia'] = df_abs.apply(lambda r: r['tipo'] in ['Falta/Atraso', 'Atestado / Justificada'] and 'Banco de Horas' not in str(r['atividade']), axis=1)
                 total_ausencia = df_abs[df_abs['is_ausencia']]['horas_normais'].sum()
-                total_geral = df_abs['horas_normais'].sum()
+                
+                # 2. Isola as folgas por Banco de Horas (Layoff / Dispensas)
+                df_abs['is_folga_bh'] = df_abs.apply(lambda r: 'Banco de Horas' in str(r['atividade']), axis=1)
+                total_folga_bh = df_abs[df_abs['is_folga_bh']]['horas_normais'].sum()
+                
+                # 3. Capacidade Real (Horas totais de disponibilidade MENOS o tempo que a empresa mandou o cara ficar em casa)
+                total_geral = df_abs['horas_normais'].sum() - total_folga_bh
                 
                 taxa_geral = (total_ausencia / total_geral * 100) if total_geral > 0 else 0.0
                 
                 if total_geral > 0:
-                    fig_pie = px.pie(names=['Horas Trabalhadas (Inc. BH)', 'Horas Ausentes'], 
+                    fig_pie = px.pie(names=['Horas Trabalhadas (Úteis)', 'Horas Ausentes (Absenteísmo Real)'], 
                                     values=[max(0, total_geral - total_ausencia), total_ausencia],
                                     title=f"Taxa de Absenteísmo Real: {taxa_geral:.1f}%",
                                     color_discrete_sequence=['#28a745', '#dc3545'])
                     fig_pie.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
                     st.plotly_chart(fig_pie, use_container_width=True, key="pie_abs_rh")
                 else:
-                    st.info("Sem horas apontadas para este filtro.")
+                    st.info("Sem horas válidas para este filtro (apenas folgas ou sem apontamento).")
             else:
                 st.info("Sem dados de absenteísmo.")
 
