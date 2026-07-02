@@ -1152,12 +1152,18 @@ with tab_dash_rh:
         df_ap_all['data_dt'] = pd.to_datetime(df_ap_all['data_registro'], format='%d/%m/%Y', errors='coerce')
         df_ap_rh = df_ap_all[(df_ap_all['data_dt'].dt.date >= data_ini_rh) & (df_ap_all['data_dt'].dt.date <= data_fim_rh)].copy()
         
-        # --- CORREÇÃO DO BANCO DE HORAS (VERSÃO FINAL) ---
+        # --- CORREÇÃO DO BANCO DE HORAS (COMPATÍVEL COM HISTÓRICO ANTIGO) ---
         def get_horas_efetivas_dia(r):
             # 1. Banco de Horas (justifica a ausência para o saldo diário zerar e ficar verde)
             if 'Banco de Horas' in str(r['atividade']):
-                return float(r['horas_normais'] or 0)
-                
+                h_norm = float(r['horas_normais'] or 0)
+                # Se as horas normais estiverem preenchidas (lançamentos novos)
+                if h_norm > 0:
+                    return h_norm
+                # Se for lançamento antigo (horas normais = 0), puxa pelo débito do saldo de BH
+                else:
+                    return abs(float(r['saldo_bh'] or 0))
+                    
             # 2. Atestado Médico (justifica a ausência)
             elif r['tipo'] == 'Atestado / Justificada':
                 return float(r['horas_normais'] or 0)
@@ -1175,7 +1181,7 @@ with tab_dash_rh:
                 return h_norm + he_50 + he_100 + bh_credito
 
         df_ap_rh['total_horas'] = df_ap_rh.apply(get_horas_efetivas_dia, axis=1)
-        # -----------------------------------
+        # --------------------------------------------------------------------
         
         apont_dict = {}
         for _, r in df_ap_rh.groupby(['operador', 'data_registro'])['total_horas'].sum().reset_index().iterrows():
