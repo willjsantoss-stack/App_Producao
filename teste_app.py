@@ -1152,14 +1152,27 @@ with tab_dash_rh:
         df_ap_all['data_dt'] = pd.to_datetime(df_ap_all['data_registro'], format='%d/%m/%Y', errors='coerce')
         df_ap_rh = df_ap_all[(df_ap_all['data_dt'].dt.date >= data_ini_rh) & (df_ap_all['data_dt'].dt.date <= data_fim_rh)].copy()
         
-        # --- CORREÇÃO DO BANCO DE HORAS ---
+        # --- CORREÇÃO DO BANCO DE HORAS (VERSÃO FINAL) ---
         def get_horas_efetivas_dia(r):
-            if r['tipo'] == 'Atestado / Justificada' and 'Banco de Horas' not in str(r['atividade']):
-                return r['horas_normais']
-            elif r['tipo'] == 'Falta/Atraso' or 'Banco de Horas' in str(r['atividade']):
+            # 1. Banco de Horas (justifica a ausência para o saldo diário zerar e ficar verde)
+            if 'Banco de Horas' in str(r['atividade']):
+                return float(r['horas_normais'] or 0)
+                
+            # 2. Atestado Médico (justifica a ausência)
+            elif r['tipo'] == 'Atestado / Justificada':
+                return float(r['horas_normais'] or 0)
+                
+            # 3. Falta Injustificada (não abate a meta diária, fica vermelho)
+            elif r['tipo'] == 'Falta/Atraso':
                 return 0.0
+                
+            # 4. Dias Normais de Trabalho
             else:
-                return r['horas_normais'] + r['he_50'] + r['he_100'] + max(0, float(r['saldo_bh'] or 0))
+                h_norm = float(r['horas_normais'] or 0)
+                he_50 = float(r['he_50'] or 0)
+                he_100 = float(r['he_100'] or 0)
+                bh_credito = max(0, float(r['saldo_bh'] or 0)) # Apenas soma se for BH positivo (crédito)
+                return h_norm + he_50 + he_100 + bh_credito
 
         df_ap_rh['total_horas'] = df_ap_rh.apply(get_horas_efetivas_dia, axis=1)
         # -----------------------------------
