@@ -1174,18 +1174,16 @@ with tab_dash_rh:
             # 1. Banco de Horas (justifica a ausência para o saldo diário zerar e ficar verde)
             if 'Banco de Horas' in str(r['atividade']):
                 h_norm = float(r['horas_normais'] or 0)
-                # Se as horas normais estiverem preenchidas (lançamentos novos)
                 if h_norm > 0:
                     return h_norm
-                # Se for lançamento antigo (horas normais = 0), puxa pelo débito do saldo de BH
                 else:
                     return abs(float(r['saldo_bh'] or 0))
                     
-            # 2. Atestado Médico (justifica a ausência)
-            elif r['tipo'] == 'Atestado / Justificada':
+            # 2. Atestado Médico E Declaração Médica (justificam a ausência, ficam verde)
+            elif r['tipo'] == 'Atestado / Justificada' or 'Declaração Médica' in str(r['atividade']):
                 return float(r['horas_normais'] or 0)
                 
-            # 3. Falta Injustificada (não abate a meta diária, fica vermelho)
+            # 3. Falta Injustificada Real (não abate a meta diária, fica vermelho)
             elif r['tipo'] == 'Falta/Atraso':
                 return 0.0
                 
