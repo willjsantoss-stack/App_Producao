@@ -2082,8 +2082,13 @@ with tab_plan:
                 df_plan_agrupado = pd.DataFrame(columns=['linha', 'horas_planejadas'])
                 total_plan_fabrica = 0.0
                 
+            # --- PREPARANDO OS DADOS PARA O GRÁFICO ---
             df_capacidade = pd.DataFrame(list(cap_linha.items()), columns=['linha', 'capacidade_h'])
+            df_bh_desconto = pd.DataFrame(list(bh_desconto_linha.items()), columns=['linha', 'banco_horas'])
+            
+            # Junta a Capacidade, o Planejado e o Banco de Horas na mesma tabela
             df_balanco = pd.merge(df_capacidade, df_plan_agrupado, on='linha', how='left').fillna(0)
+            df_balanco = pd.merge(df_balanco, df_bh_desconto, on='linha', how='left').fillna(0)
             
             df_balanco['ocupacao_pct'] = ((df_balanco['horas_planejadas'] / df_balanco['capacidade_h']) * 100).fillna(0)
             df_balanco['saldo_h'] = df_balanco['capacidade_h'] - df_balanco['horas_planejadas']
@@ -2098,9 +2103,16 @@ with tab_plan:
             col_m4.metric("Ocupação Global", f"{ocup_global_pct:.1f}%")
             
             df_balanco = df_balanco.sort_values('ocupacao_pct', ascending=False)
+            
+            # --- MONTANDO O GRÁFICO COM AS BARRAS EMPILHADAS ---
             fig_bal = go.Figure()
-            fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['capacidade_h'], name='Capacidade Disponível (S/ BH)', marker_color='#28a745'))
-            fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['horas_planejadas'], name='Demanda Planejada', marker_color='#004a99'))
+            
+            # COLUNA 1: A Régua de Capacidade (Verde Escuro + Verde Claro)
+            fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['capacidade_h'], name='Capacidade Líquida', marker_color='#28a745', offsetgroup=0))
+            fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['banco_horas'], name='Folga / BH', marker_color='#85e0a3', offsetgroup=0, base=df_balanco['capacidade_h']))
+            
+            # COLUNA 2: A Demanda Planejada (Azul)
+            fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['horas_planejadas'], name='Demanda Planejada', marker_color='#004a99', offsetgroup=1, base=0))
             
             fig_bal.update_layout(barmode='group', title="Gargalos e Ociosidade por Setor", yaxis_title="Horas", height=350, margin=dict(t=30, b=10))
             st.plotly_chart(fig_bal, use_container_width=True, key="bar_balanco_capacidade")
