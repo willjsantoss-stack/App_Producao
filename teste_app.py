@@ -2001,6 +2001,14 @@ with tab_plan:
             
             cursor.execute("SELECT data FROM feriados")
             feriados_bd_bal = [r[0] for r in cursor.fetchall()]
+
+            # --- NOVA LÓGICA: BUSCAR DISPENSAS (BANCO DE HORAS) DO PERÍODO ---
+            df_ap_bh = pd.read_sql_query("SELECT matricula, data_registro, atividade, horas_normais FROM apontamentos WHERE atividade LIKE '%%Banco de Horas%%'", engine)
+            df_ap_bh['data_dt'] = pd.to_datetime(df_ap_bh['data_registro'], format='%d/%m/%Y', errors='coerce').dt.date
+            df_ap_bh = df_ap_bh[(df_ap_bh['data_dt'] >= dt_start_cap) & (df_ap_bh['data_dt'] <= dt_end_cap)]
+            df_ap_bh = pd.merge(df_ap_bh, df_colabs_ativos_bal[['matricula', 'linha']], on='matricula', how='inner')
+            bh_desconto_linha = df_ap_bh.groupby('linha')['horas_normais'].sum().to_dict()
+            # -----------------------------------------------------------------
             
             cap_linha = {}
             cap_total_fabrica = 0.0
@@ -2032,6 +2040,14 @@ with tab_plan:
                             cap_linha[linha_op] += c_sx
                             cap_total_fabrica += c_sx
 
+            # --- APLICAR O DESCONTO DE BANCO DE HORAS NA CAPACIDADE ---
+            for linha in cap_linha:
+                desconto = bh_desconto_linha.get(linha, 0.0)
+                cap_linha[linha] = max(0, cap_linha[linha] - desconto) # Impede que fique negativo
+            
+            cap_total_fabrica = max(0, cap_total_fabrica - sum(bh_desconto_linha.values()))
+            # ----------------------------------------------------------
+
             if not df_gantt_raw.empty:
                 df_plan_clean = df_gantt_raw[df_gantt_raw['so'] != '⏸️ AFASTAMENTO']
                 df_plan_agrupado = df_plan_clean.groupby('linha')['horas_planejadas'].sum().reset_index()
@@ -2050,14 +2066,14 @@ with tab_plan:
             saldo_global = cap_total_fabrica - total_plan_fabrica
             
             col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-            col_m1.metric("Capacidade Total", f"{cap_total_fabrica:.0f}h")
+            col_m1.metric("Capacidade Total Líquida", f"{cap_total_fabrica:.0f}h")
             col_m2.metric("Horas Planejadas", f"{total_plan_fabrica:.0f}h")
             col_m3.metric("Saldo Livre (Ociosidade)", f"{saldo_global:.0f}h", delta=f"{saldo_global:.0f}h", delta_color="normal" if saldo_global >= 0 else "inverse")
             col_m4.metric("Ocupação Global", f"{ocup_global_pct:.1f}%")
             
             df_balanco = df_balanco.sort_values('ocupacao_pct', ascending=False)
             fig_bal = go.Figure()
-            fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['capacidade_h'], name='Capacidade Disponível', marker_color='#28a745'))
+            fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['capacidade_h'], name='Capacidade Disponível (S/ BH)', marker_color='#28a745'))
             fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['horas_planejadas'], name='Demanda Planejada', marker_color='#004a99'))
             
             fig_bal.update_layout(barmode='group', title="Gargalos e Ociosidade por Setor", yaxis_title="Horas", height=350, margin=dict(t=30, b=10))
