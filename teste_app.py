@@ -1313,13 +1313,17 @@ with tab_dash_rh:
             df_plot_carga = pd.merge(df_carga, df_consumo_op, on='operador', how='left').fillna(0)
             df_plot_carga = df_plot_carga.sort_values(by='total_apontado', ascending=False)
             
+            # --- APLICA O DESCONTO NA BARRA VERDE (CAPACIDADE LÍQUIDA) ---
+            df_plot_carga['capacidade_liquida'] = df_plot_carga['capacidade'] - df_plot_carga['banco_horas']
+            df_plot_carga['capacidade_liquida'] = df_plot_carga['capacidade_liquida'].apply(lambda x: max(0, x))
+            
             base_paradas = df_plot_carga['h_normais']
             base_atestados = base_paradas + df_plot_carga['paradas']
             base_bh = base_atestados + df_plot_carga['atestados']
             base_he50 = base_bh + df_plot_carga['banco_horas']
             base_he100 = base_he50 + df_plot_carga['he50']
             
-            tot_cap = df_plot_carga['capacidade'].sum()
+            tot_cap = df_plot_carga['capacidade_liquida'].sum() # Agora soma a líquida
             tot_hn = df_plot_carga['h_normais'].sum()
             tot_par = df_plot_carga['paradas'].sum()
             tot_ate = df_plot_carga['atestados'].sum()
@@ -1328,7 +1332,8 @@ with tab_dash_rh:
             tot_he100 = df_plot_carga['he100'].sum()
             
             fig_carga = go.Figure()
-            fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['capacidade'], name=f'Disponibilidade Mensal ({tot_cap:.1f}h)', marker_color='#28a745', offsetgroup=0))
+            # A primeira barra agora desenha a capacidade_liquida
+            fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['capacidade_liquida'], name=f'Disponibilidade Líquida ({tot_cap:.1f}h)', marker_color='#28a745', offsetgroup=0))
             fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['h_normais'], name=f'Normais/Trabalhadas ({tot_hn:.1f}h)', marker_color='#004a99', offsetgroup=1, base=0))
             fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['paradas'], name=f'Paradas ({tot_par:.1f}h)', marker_color='#ffc107', offsetgroup=1, base=base_paradas))
             fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['atestados'], name=f'Atestados/Faltas ({tot_ate:.1f}h)', marker_color='#dc3545', offsetgroup=1, base=base_atestados))
@@ -2003,11 +2008,17 @@ with tab_plan:
             feriados_bd_bal = [r[0] for r in cursor.fetchall()]
 
             # --- NOVA LÓGICA: BUSCAR DISPENSAS (BANCO DE HORAS) DO PERÍODO ---
-            df_ap_bh = pd.read_sql_query("SELECT matricula, data_registro, atividade, horas_normais FROM apontamentos WHERE atividade LIKE '%%Banco de Horas%%'", engine)
+            # Atualizado para ler tanto os apontamentos novos quanto o histórico antigo
+            df_ap_bh = pd.read_sql_query("SELECT matricula, data_registro, atividade, horas_normais, saldo_bh FROM apontamentos WHERE atividade LIKE '%%Banco de Horas%%'", engine)
+            
             df_ap_bh['data_dt'] = pd.to_datetime(df_ap_bh['data_registro'], format='%d/%m/%Y', errors='coerce').dt.date
             df_ap_bh = df_ap_bh[(df_ap_bh['data_dt'] >= dt_start_cap) & (df_ap_bh['data_dt'] <= dt_end_cap)]
             df_ap_bh = pd.merge(df_ap_bh, df_colabs_ativos_bal[['matricula', 'linha']], on='matricula', how='inner')
-            bh_desconto_linha = df_ap_bh.groupby('linha')['horas_normais'].sum().to_dict()
+            
+            # Regra inteligente: se não tem horas normais, puxa o débito do saldo (compatibilidade)
+            df_ap_bh['bh_desconto'] = df_ap_bh.apply(lambda r: float(r['horas_normais']) if float(r['horas_normais'] or 0) > 0 else abs(float(r['saldo_bh'] or 0)), axis=1)
+            
+            bh_desconto_linha = df_ap_bh.groupby('linha')['bh_desconto'].sum().to_dict()
             # -----------------------------------------------------------------
             
             cap_linha = {}
