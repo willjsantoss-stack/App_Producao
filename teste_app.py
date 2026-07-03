@@ -1313,17 +1313,22 @@ with tab_dash_rh:
             df_plot_carga = pd.merge(df_carga, df_consumo_op, on='operador', how='left').fillna(0)
             df_plot_carga = df_plot_carga.sort_values(by='total_apontado', ascending=False)
             
-            # --- APLICA O DESCONTO NA BARRA VERDE (CAPACIDADE LÍQUIDA) ---
+            # --- CAPACIDADE LÍQUIDA ---
             df_plot_carga['capacidade_liquida'] = df_plot_carga['capacidade'] - df_plot_carga['banco_horas']
             df_plot_carga['capacidade_liquida'] = df_plot_carga['capacidade_liquida'].apply(lambda x: max(0, x))
             
+            # --- BASES DA COLUNA 2 (APONTAMENTOS) ---
+            # Removemos o Banco de Horas daqui!
             base_paradas = df_plot_carga['h_normais']
             base_atestados = base_paradas + df_plot_carga['paradas']
-            base_bh = base_atestados + df_plot_carga['atestados']
-            base_he50 = base_bh + df_plot_carga['banco_horas']
+            base_he50 = base_atestados + df_plot_carga['atestados'] # Pula o BH e vai direto pro HE
             base_he100 = base_he50 + df_plot_carga['he50']
             
-            tot_cap = df_plot_carga['capacidade_liquida'].sum() # Agora soma a líquida
+            # --- BASES DA COLUNA 1 (CAPACIDADE) ---
+            base_bh_capacidade = df_plot_carga['capacidade_liquida']
+            
+            # TOTALIZADORES
+            tot_cap = df_plot_carga['capacidade_liquida'].sum()
             tot_hn = df_plot_carga['h_normais'].sum()
             tot_par = df_plot_carga['paradas'].sum()
             tot_ate = df_plot_carga['atestados'].sum()
@@ -1332,12 +1337,22 @@ with tab_dash_rh:
             tot_he100 = df_plot_carga['he100'].sum()
             
             fig_carga = go.Figure()
-            # A primeira barra agora desenha a capacidade_liquida
-            fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['capacidade_liquida'], name=f'Disponibilidade Líquida ({tot_cap:.1f}h)', marker_color='#28a745', offsetgroup=0))
-            fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['h_normais'], name=f'Normais/Trabalhadas ({tot_hn:.1f}h)', marker_color='#004a99', offsetgroup=1, base=0))
+            
+            # ==========================================
+            # COLUNA 1: A RÉGUA DE CAPACIDADE (offsetgroup=0)
+            # ==========================================
+            # Base verde escuro: O tempo que a empresa de facto tem para usar
+            fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['capacidade_liquida'], name=f'Disp. Líquida ({tot_cap:.1f}h)', marker_color='#28a745', offsetgroup=0))
+            
+            # Topo verde claro: O tempo que a empresa abriu mão (Banco de Horas) empilhado em cima
+            fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['banco_horas'], name=f'Folga / BH ({tot_bh:.1f}h)', marker_color='#85e0a3', offsetgroup=0, base=base_bh_capacidade))
+            
+            # ==========================================
+            # COLUNA 2: O QUE FOI APONTADO (offsetgroup=1)
+            # ==========================================
+            fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['h_normais'], name=f'Normais/Trab. ({tot_hn:.1f}h)', marker_color='#004a99', offsetgroup=1, base=0))
             fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['paradas'], name=f'Paradas ({tot_par:.1f}h)', marker_color='#ffc107', offsetgroup=1, base=base_paradas))
             fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['atestados'], name=f'Atestados/Faltas ({tot_ate:.1f}h)', marker_color='#dc3545', offsetgroup=1, base=base_atestados))
-            fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['banco_horas'], name=f'Banco de Horas ({tot_bh:.1f}h)', marker_color='#6cb2eb', offsetgroup=1, base=base_bh))
             fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['he50'], name=f'HE 50% ({tot_he50:.1f}h)', marker_color='#fd7e14', offsetgroup=1, base=base_he50))
             fig_carga.add_trace(go.Bar(x=df_plot_carga['operador'], y=df_plot_carga['he100'], name=f'HE 100% ({tot_he100:.1f}h)', marker_color='#d9480f', offsetgroup=1, base=base_he100))
             
