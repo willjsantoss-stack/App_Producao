@@ -404,9 +404,10 @@ with st.sidebar:
 user_role = st.query_params.get("role", "admin").lower()
 
 # ==========================================
-# 6. ABAS PRINCIPAIS
+# 6. NAVEGAÇÃO PRINCIPAL (MENU LATERAL)
 # ==========================================
-tab_lancamento, tab_dash_proj, tab_dash_rh, tab_ordens, tab_plan, tab_manutencao, tab_pdf = st.tabs([
+st.sidebar.markdown("---")
+menu_selecionado = st.sidebar.radio("📌 Menu Principal:", [
     "📝 Lançamentos", 
     "📊 Dash. Projetos", 
     "👥 Dash. RH",
@@ -418,7 +419,7 @@ tab_lancamento, tab_dash_proj, tab_dash_rh, tab_ordens, tab_plan, tab_manutencao
 # ------------------------------------------
 # ABA: LANÇAMENTO & AUDITORIA
 # ------------------------------------------
-with tab_lancamento:
+if menu_selecionado == "📝 Lançamentos":
     if user_role == "viewer":
         st.error("🔒 Acesso Restrito - Modo de Visualização Gerencial (Apenas Leitura)")
     else:
@@ -812,7 +813,7 @@ with tab_lancamento:
 # ------------------------------------------
 # ABA: DASHBOARD PROJETOS E PRODUÇÃO
 # ------------------------------------------
-with tab_dash_proj:
+elif menu_selecionado == "📊 Dash. Projetos":
     st.markdown("## 📊 Painel de Indicadores de Projetos")
     
     st.markdown("### ⏱️ Rentabilidade Geral do Projeto: Horas Consumidas vs Vendidas")
@@ -1099,7 +1100,7 @@ with tab_dash_proj:
 # ------------------------------------------
 # ABA: DASHBOARD RH (RECURSOS HUMANOS)
 # ------------------------------------------
-with tab_dash_rh:
+elif menu_selecionado == "👥 Dash. RH":
     if user_role == "viewer":
         st.error("🔒 Acesso Restrito - Modo de Visualização Gerencial (Apenas Leitura)")
     else:
@@ -1456,7 +1457,7 @@ with tab_dash_rh:
 # ------------------------------------------
 # ABA: ORDENS DE PRODUÇÃO
 # ------------------------------------------
-with tab_ordens:
+elif menu_selecionado == "📋 Ordens de Produção":
     if user_role == "viewer":
         st.error("🔒 Acesso Restrito - Modo de Visualização Gerencial (Apenas Leitura)")
     else:
@@ -1562,7 +1563,7 @@ with tab_ordens:
 # ------------------------------------------
 # ABA: PLANEJAMENTO E ALOCAÇÃO 
 # ------------------------------------------
-with tab_plan:
+elif menu_selecionado == "📅 Planejamento de Carga":
     st.markdown("## 📅 Planejamento de Carga de Máquina e Operador")
     
     if user_role != "viewer":
@@ -2231,7 +2232,7 @@ with tab_plan:
 # ------------------------------------------
 # ABA: MANUTENÇÃO E IMPORTAÇÃO
 # ------------------------------------------
-with tab_manutencao:
+elif menu_selecionado == "🔍 Manutenção":
     if user_role == "viewer":
         st.error("🔒 Acesso Restrito - Modo de Visualização Gerencial (Apenas Leitura)")
     else:
@@ -2397,7 +2398,7 @@ with tab_manutencao:
 # ------------------------------------------
 # ABA: RELATÓRIOS PDF 
 # ------------------------------------------
-with tab_pdf:
+elif menu_selecionado == "📑 Relatórios PDF":
     if user_role == "viewer":
         st.error("🔒 Acesso Restrito - Modo de Visualização Gerencial (Apenas Leitura)")
     else:
