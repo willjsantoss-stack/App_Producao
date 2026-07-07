@@ -407,15 +407,43 @@ user_role = st.query_params.get("role", "admin").lower()
 # 6. NAVEGAÇÃO PRINCIPAL (MENU LATERAL)
 # ==========================================
 st.sidebar.markdown("---")
-menu_selecionado = st.sidebar.radio("📌 Menu Principal:", [
-    "📝 Lançamentos", 
-    "📊 Dash. Projetos", 
-    "👥 Dash. RH",
-    "📋 Ordens de Produção",
-    "📅 Planejamento de Carga",
-    "🔍 Manutenção", 
-    "📑 Relatórios PDF"
-])
+
+st.markdown("""
+    <style>
+    div[role="radiogroup"] { flex-direction: row; flex-wrap: wrap; gap: 10px; justify-content: center; }
+    div[role="radiogroup"] > label { 
+        background-color: #e9ecef; 
+        padding: 8px 16px; 
+        border-radius: 8px; 
+        border: 1px solid #ced4da; 
+        cursor: pointer;
+    }
+    div[role="radiogroup"] > label[data-checked="true"] { 
+        background-color: #004a99; 
+        border-color: #004a99;
+    }
+    div[role="radiogroup"] > label[data-checked="true"] p { color: white !important; }
+    div[role="radiogroup"] > label > div:first-child { display: none; /* Esconde a bolinha */ }
+    div[role="radiogroup"] > label p { font-weight: bold; margin: 0; }
+    </style>
+""", unsafe_allow_html=True)
+
+menu_selecionado = st.radio(
+    "Navegação", 
+    [
+        "📝 Lançamentos", 
+        "📊 Dash. Projetos", 
+        "👥 Dash. RH",
+        "📋 Ordens de Produção",
+        "📅 Planejamento de Carga",
+        "🔍 Manutenção", 
+        "📑 Relatórios PDF"
+    ],
+    horizontal=True,
+    label_visibility="collapsed" # Esconde o texto "Navegação" para ficar limpo
+)
+st.markdown("---")
+
 # ------------------------------------------
 # ABA: LANÇAMENTO & AUDITORIA
 # ------------------------------------------
@@ -1908,7 +1936,10 @@ elif menu_selecionado == "📅 Planejamento de Carga":
         todas_sos += [r[0] for r in cursor.fetchall() if r[0]]
         todas_sos = sorted(list(set(todas_sos)))
         
-        color_discrete_map = {so: px.colors.qualitative.Plotly[i % len(px.colors.qualitative.Plotly)] for i, so in enumerate(todas_sos)}
+        # 🎨 SUPER PALETA: Combina várias paletas para gerar 74 cores únicas antes de repetir
+        super_paleta = px.colors.qualitative.Alphabet + px.colors.qualitative.Light24 + px.colors.qualitative.Dark24
+        
+        color_discrete_map = {so: super_paleta[i % len(super_paleta)] for i, so in enumerate(todas_sos)}
         color_discrete_map['⏸️ AFASTAMENTO'] = '#6c757d' 
 
         fig_gantt_final = px.timeline(
