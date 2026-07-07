@@ -1627,7 +1627,7 @@ with tab_plan:
                                 ops_selecionados = st.multiselect("5. Operador(es)", lista_ops, key="ops_sel_mrp_mult")
 
                                 data_entrega = st.date_input("6. Data de Entrega (Deadline)", date.today() + timedelta(days=7), format="DD/MM/YYYY", key="dt_ent_mrp_input")
-    
+
                                 alerta_duplicidade = False
                                 ja_planejado = pd.read_sql_query("SELECT DISTINCT c.nome FROM planejamento p JOIN colaboradores c ON p.matricula = c.matricula WHERE p.wo = %(wo)s AND p.unidade = %(und)s", engine, params={"wo": wo_clean, "und": unidade_plan_sel})
                                 if not ja_planejado.empty:
@@ -1839,12 +1839,14 @@ with tab_plan:
             df_valid_sos = df_gantt_raw[df_gantt_raw['so'] != '⏸️ AFASTAMENTO'][['so', 'customer']].drop_duplicates()
             lista_isolamento = ["- Mostrar Todos os Projetos (Fábrica) -"] + sorted([f"{r['so']} - {r['customer'] if pd.notna(r['customer']) else 'Desconhecido'}" for _, r in df_valid_sos.iterrows()])
             
-            so_iso_sel = st.selectbox("🔍 Isolar Caminho de um Projeto (SO):", lista_isolamento)
+            # ADICIONADA A KEY AQUI PARA PARAR O CONGELAMENTO
+            so_iso_sel = st.selectbox("🔍 Isolar Caminho de um Projeto (SO):", lista_isolamento, key="so_iso_sel_gantt_filtro")
+            
             if so_iso_sel != "- Mostrar Todos os Projetos (Fábrica) -":
                 so_clean_iso = so_iso_sel.split(" - ")[0].strip()
                 df_gantt_raw = df_gantt_raw[(df_gantt_raw['so'] == so_clean_iso) | (df_gantt_raw['so'] == '⏸️ AFASTAMENTO')]
         else:
-            st.selectbox("🔍 Isolar Caminho de um Projeto (SO):", ["- Sem Planejamentos Ativos -"], disabled=True)
+            st.selectbox("🔍 Isolar Caminho de um Projeto (SO):", ["- Sem Planejamentos Ativos -"], disabled=True, key="so_iso_sel_gantt_filtro_vazio")
             
     if not df_gantt_raw.empty:
         df_overlap = df_gantt_raw.groupby(['operador', 'data_planejada']).size().reset_index(name='count')
