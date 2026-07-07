@@ -1598,33 +1598,35 @@ with tab_plan:
                             if not filtro_wo_plan.empty:
                                 wo_data = filtro_wo_plan.iloc[0]
                                 st.info(f"⚙️ **Linha:** {wo_data['linha']} | 👤 **Cliente:** {wo_data['customer']}")
-                                
+
                                 qtde_wo = int(wo_data['qtde']) if pd.notna(wo_data['qtde']) else 1
                                 lista_unidades_plan = ["Geral"] + [f"Unidade {i}" for i in range(1, qtde_wo + 1)] if qtde_wo > 0 else ["Geral"]
-                                unidade_plan_sel = st.selectbox("3. Unidade a Planejar", lista_unidades_plan)
                                 
+                                # --- CHAVES (KEYS) ADICIONADAS PARA IMPEDIR A QUEBRA DAS ABAS ---
+                                unidade_plan_sel = st.selectbox("3. Unidade a Planejar", lista_unidades_plan, key="und_plan_sel_mrp")
+
                                 horas_bd = float(wo_data['horas_vendidas']) if pd.notna(wo_data['horas_vendidas']) and wo_data['horas_vendidas'] > 0 else 8.0
-                                horas_base = st.number_input("4. Horas Estimadas (Base)", min_value=0.5, step=0.5, value=horas_bd)
-                                fator_seguranca = st.slider("5. Fator de Segurança (%)", min_value=0, max_value=50, value=10, step=5)
-                                
+                                horas_base = st.number_input("4. Horas Estimadas (Base)", min_value=0.5, step=0.5, value=horas_bd, key="hr_base_sel_mrp")
+                                fator_seguranca = st.slider("5. Fator de Segurança (%)", min_value=0, max_value=50, value=10, step=5, key="fat_seg_sel_mrp")
+
                                 horas_totais_com_fator = round(horas_base * (1 + (fator_seguranca / 100.0)), 2)
                                 st.markdown(f"Horas Totais a Alocar (com margem): <span style='color:#004a99; font-weight:bold; font-size:18px;'>{horas_totais_com_fator}h</span>", unsafe_allow_html=True)
-                                
+
                                 linha_wo = wo_data['linha']
-                                if linha_wo and str(linha_wo) != "None" and str(linha_wo).strip() != "":
-                                    df_colab_plan = pd.read_sql_query("SELECT matricula, nome FROM colaboradores WHERE (data_demissao IS NULL OR data_demissao = '') AND linha = %(linha)s", engine, params={"linha": linha_wo})
+                                if pd.notna(linha_wo) and str(linha_wo).lower() != "nan" and str(linha_wo) != "None" and str(linha_wo).strip() != "":
+                                    df_colab_plan = pd.read_sql_query("SELECT matricula, nome FROM colaboradores WHERE (data_demissao IS NULL OR data_demissao = '') AND linha = %(linha)s", engine, params={"linha": str(linha_wo)})
                                 else:
                                     df_colab_plan = pd.read_sql_query("SELECT matricula, nome FROM colaboradores WHERE data_demissao IS NULL OR data_demissao = ''", engine)
-                                
+
                                 if df_colab_plan.empty:
                                     st.warning(f"Nenhum colaborador encontrado para a linha '{linha_wo}'.")
                                     lista_ops = []
                                 else:
                                     lista_ops = [f"{r['matricula']} - {r['nome']}" for _, r in df_colab_plan.iterrows()]
-                                
-                                ops_selecionados = st.multiselect("5. Operador(es)", lista_ops)
-                                
-                                data_entrega = st.date_input("6. Data de Entrega (Deadline)", date.today() + timedelta(days=7), format="DD/MM/YYYY")
+
+                                ops_selecionados = st.multiselect("5. Operador(es)", lista_ops, key="ops_sel_mrp_mult")
+
+                                data_entrega = st.date_input("6. Data de Entrega (Deadline)", date.today() + timedelta(days=7), format="DD/MM/YYYY", key="dt_ent_mrp_input")
     
                                 alerta_duplicidade = False
                                 ja_planejado = pd.read_sql_query("SELECT DISTINCT c.nome FROM planejamento p JOIN colaboradores c ON p.matricula = c.matricula WHERE p.wo = %(wo)s AND p.unidade = %(und)s", engine, params={"wo": wo_clean, "und": unidade_plan_sel})
