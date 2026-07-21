@@ -311,10 +311,17 @@ def limpa_texto_pdf(texto):
     return texto.encode('latin-1', 'replace').decode('latin-1')
 
 def preparar_imagem_pdf(caminho):
-    if not caminho or caminho == 'N/A' or not os.path.exists(caminho): return None
-    if os.path.getsize(caminho) == 0: return None 
+    if not caminho or caminho == 'N/A': return None
+    
+    # MÁGICA AQUI: Pega apenas o nome da foto (ex: foto_antes.jpg) e ignora o caminho velho do C:\
+    nome_arquivo = os.path.basename(str(caminho).replace('\\', '/'))
+    caminho_real = os.path.join(PASTA_FOTOS, nome_arquivo)
+    
+    if not os.path.exists(caminho_real) or os.path.getsize(caminho_real) == 0: 
+        return None 
+        
     try:
-        img = Image.open(caminho)
+        img = Image.open(caminho_real)
         if img.mode != 'RGB': img = img.convert('RGB')
         target_ratio = 4 / 3
         img_ratio = img.width / img.height
@@ -326,7 +333,8 @@ def preparar_imagem_pdf(caminho):
             new_h = int(img.width / target_ratio)
             offset = (img.height - new_h) / 2
             img = img.crop((0, offset, img.width, offset + new_h))
-        caminho_pdf = caminho.replace(".jpg", "_pdf.jpg").replace(".png", "_pdf.jpg").replace(".jpeg", "_pdf.jpg")
+            
+        caminho_pdf = caminho_real.replace(".jpg", "_pdf.jpg").replace(".png", "_pdf.jpg").replace(".jpeg", "_pdf.jpg")
         img = img.resize((800, 600))
         img.save(caminho_pdf, "JPEG", quality=85)
         return caminho_pdf
@@ -394,7 +402,7 @@ with st.sidebar:
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_fil.to_excel(writer, index=False, sheet_name='Ponto')
             
-            st.download_button(label="📥 Baixar Excel do Ponto", data=output.getvalue(), file_name=arq_nome, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            st.download_button(label="📥 Baixar Excel do Ponto", data=output.getvalue(), file_name=arq_nome, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
         else:
             st.info("Nenhum apontamento registrado neste período.")
 
@@ -613,7 +621,7 @@ if menu_selecionado == "📝 Lançamentos":
                         st.warning("⚠️ **Aviso de PCP:** Esta Ordem de Produção (WO) não está no seu planejamento (Gantt) para hoje.")
                         motivo_desvio = st.text_input("Justificativa para Apontamento Extra-Plano (Obrigatório):", key="motivo_desvio_input")
 
-            if st.button("💾 SALVAR APONTAMENTO", type="primary", use_container_width=True):
+            if st.button("💾 SALVAR APONTAMENTO", type="primary", width="stretch"):
                 if colab_sel == "- Selecione -":
                     st.error("❌ Selecione um operador.")
                 else:
@@ -708,7 +716,7 @@ if menu_selecionado == "📝 Lançamentos":
             hf_lote = c_lote2.time_input("Fim da Ausência (Horário que o turno encerraria)", hora_padrao_fim, step=60)
             motivo_lote = c_lote3.text_input("Motivo", "Saída antecipada por baixa demanda S&OP")
             
-            if st.button("🚀 Processar Desconto de Banco de Horas em Lote", type="primary", use_container_width=True):
+            if st.button("🚀 Processar Desconto de Banco de Horas em Lote", type="primary", width="stretch"):
                 if hi_lote >= hf_lote:
                     st.error("A hora de início deve ser menor que a hora de término.")
                 else:
@@ -773,7 +781,7 @@ if menu_selecionado == "📝 Lançamentos":
                         "hora_inicio": "Início", "hora_fim": "Fim", "atividade": "Atividade", 
                         "tipo": "Tipo", "horas_normais": "Normal", "he_50": "HE50", "he_100": "HE100", "saldo_bh": "Banco (h)"
                     })
-                    st.dataframe(df_auditoria, use_container_width=True, height=145)
+                    st.dataframe(df_auditoria, width="stretch", height=145)
                 else:
                     st.info("Nenhum lançamento efetuado nesta data.")
             else:
@@ -819,7 +827,7 @@ if menu_selecionado == "📝 Lançamentos":
                         
                         st.write("")
                         c_btn_e1, c_btn_e2 = st.columns([1, 1])
-                        if c_btn_e1.button("💾 Salvar Novo Horário", type="primary", use_container_width=True):
+                        if c_btn_e1.button("💾 Salvar Novo Horário", type="primary", width="stretch"):
                             cursor.execute("UPDATE apontamentos SET hora_inicio=%s, hora_fim=%s WHERE id=%s", (str(hi_edit), str(hf_edit), id_apont))
                             conn.commit()
                             recalcular_dia(conn, row_apont['matricula'], data_br_edit)
@@ -827,7 +835,7 @@ if menu_selecionado == "📝 Lançamentos":
                             time_sys.sleep(1.5)
                             st.rerun()
                             
-                        if c_btn_e2.button("🗑️ Excluir Apontamento", use_container_width=True):
+                        if c_btn_e2.button("🗑️ Excluir Apontamento", width="stretch"):
                             cursor.execute("DELETE FROM apontamentos WHERE id=%s", (id_apont,))
                             conn.commit()
                             recalcular_dia(conn, row_apont['matricula'], data_br_edit)
@@ -929,7 +937,7 @@ elif menu_selecionado == "📊 Dash. Projetos":
             ))
             
             fig_gauge.update_layout(height=300, margin=dict(l=30, r=30, t=40, b=10))
-            st.plotly_chart(fig_gauge, use_container_width=True, config={'displayModeBar': False}, key="gauge_main_proj")
+            st.plotly_chart(fig_gauge, width="stretch", config={'displayModeBar': False}, key="gauge_main_proj")
             
             st.markdown(f"""
             <div style='text-align: center; font-size: 14px; margin-top: -10px;'>
@@ -1007,7 +1015,7 @@ elif menu_selecionado == "📊 Dash. Projetos":
                 ))
                 fig_l.update_layout(height=200, margin=dict(l=20, r=20, t=20, b=10))
                 
-                st.plotly_chart(fig_l, use_container_width=True, config={'displayModeBar': False}, key=f"gauge_linha_{idx}")
+                st.plotly_chart(fig_l, width="stretch", config={'displayModeBar': False}, key=f"gauge_linha_{idx}")
                 st.markdown(f"""
                 <div style='text-align: center; font-size: 12px; margin-top: -15px; margin-bottom: 20px;'>
                     <span style='color:#004a99; font-weight:bold;'>■ Prod: {perc_prod_int_l:.1f}%</span> 
@@ -1045,7 +1053,7 @@ elif menu_selecionado == "📊 Dash. Projetos":
                                 hole=0.5)
             fig_pie_he.update_layout(height=350, margin=dict(l=20, r=20, t=20, b=20),
                                      legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="center", x=0.5))
-            st.plotly_chart(fig_pie_he, use_container_width=True, key="pie_he_proj_micro")
+            st.plotly_chart(fig_pie_he, width="stretch", key="pie_he_proj_micro")
         else:
             st.info("Sem apontamentos para compor o custo deste projeto.")
 
@@ -1077,7 +1085,7 @@ elif menu_selecionado == "📊 Dash. Projetos":
             
             fig_bar_he.update_layout(barmode='stack', height=350, margin=dict(l=20, r=20, t=20, b=20),
                                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
-            st.plotly_chart(fig_bar_he, use_container_width=True, key="bar_he_proj_macro")
+            st.plotly_chart(fig_bar_he, width="stretch", key="bar_he_proj_macro")
         else:
             st.info("Nenhum projeto ativo com apontamentos para analisar.")
 
@@ -1108,7 +1116,7 @@ elif menu_selecionado == "📊 Dash. Projetos":
                 'descricao': 'Observações'
             }
             df_kardex = df_kardex.rename(columns=cols_map_kardex)
-            st.dataframe(df_kardex, use_container_width=True)
+            st.dataframe(df_kardex, width="stretch")
 
             output_kardex = io.BytesIO()
             with pd.ExcelWriter(output_kardex, engine='openpyxl') as writer:
@@ -1119,7 +1127,7 @@ elif menu_selecionado == "📊 Dash. Projetos":
                 data=output_kardex.getvalue(),
                 file_name=f"Kardex_Projeto_{so_dash_clean}_{date.today().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
+                width="stretch"
             )
         else:
             st.info("Nenhum apontamento encontrado para este projeto.")
@@ -1158,7 +1166,7 @@ elif menu_selecionado == "👥 Dash. RH":
                 textposition='auto'
             ))
             fig_bh.update_layout(title="Saldo Histórico de Banco de Horas por Colaborador Ativo", yaxis_title="Horas (h)", height=350, margin=dict(t=40, b=10))
-            st.plotly_chart(fig_bh, use_container_width=True, key="bar_banco_horas_rh")
+            st.plotly_chart(fig_bh, width="stretch", key="bar_banco_horas_rh")
         else:
             st.info("Não há saldo de banco de horas registrado.")
         
@@ -1305,7 +1313,7 @@ elif menu_selecionado == "👥 Dash. RH":
                 styled_df = df_ponto_final.style.map(color_ponto, subset=[d.strftime("%d/%m") for d in dias_mes if d.strftime("%d/%m") in df_ponto_final.columns])
             except AttributeError:
                 styled_df = df_ponto_final.style.applymap(color_ponto, subset=[d.strftime("%d/%m") for d in dias_mes if d.strftime("%d/%m") in df_ponto_final.columns])
-            st.dataframe(styled_df, use_container_width=True)
+            st.dataframe(styled_df, width="stretch")
 
         st.markdown("---")
 
@@ -1387,7 +1395,7 @@ elif menu_selecionado == "👥 Dash. RH":
             
             fig_carga.update_layout(barmode='group', height=450, margin=dict(l=20, r=20, t=30, b=20),
                                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
-            st.plotly_chart(fig_carga, use_container_width=True, key="bar_carga_rh")
+            st.plotly_chart(fig_carga, width="stretch", key="bar_carga_rh")
         else:
             st.info("Sem dados para a visão de capacidade.")
 
@@ -1431,7 +1439,7 @@ elif menu_selecionado == "👥 Dash. RH":
                                     title=f"Taxa de Absenteísmo Real: {taxa_geral:.1f}%",
                                     color_discrete_sequence=['#28a745', '#dc3545'])
                     fig_pie.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
-                    st.plotly_chart(fig_pie, use_container_width=True, key="pie_abs_rh")
+                    st.plotly_chart(fig_pie, width="stretch", key="pie_abs_rh")
                 else:
                     st.info("Sem horas disponíveis líquidas para calcular o absenteísmo neste filtro.")
             else:
@@ -1476,7 +1484,7 @@ elif menu_selecionado == "👥 Dash. RH":
                     )
                     fig_ind.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20),
                                           legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="center", x=0.5))
-                    st.plotly_chart(fig_ind, use_container_width=True, key="pie_ind_rh")
+                    st.plotly_chart(fig_ind, width="stretch", key="pie_ind_rh")
                 else:
                     st.info("Colaborador não tem apontamentos suficientes neste mês.")
             else:
@@ -1507,7 +1515,7 @@ elif menu_selecionado == "📋 Ordens de Produção":
                     qtd_n = st.number_input("Quantidade*", min_value=1, step=1)
                     hr_ven = st.number_input("Horas Vendidas*", min_value=0.0, step=0.5, value=0.0)
                     
-                    if st.form_submit_button("💾 Criar Ordem", type="primary", use_container_width=False):
+                    if st.form_submit_button("💾 Criar Ordem", type="primary", width="content"):
                         if not so_n or not wo_n or not item_n or not cli_n or not prod_n or linha_n == "- Selecione -" or hr_ven <= 0:
                             st.error("❌ Preencha os campos obrigatórios (*). As Horas Vendidas devem ser maiores que zero.")
                         else:
@@ -1556,7 +1564,7 @@ elif menu_selecionado == "📋 Ordens de Produção":
                                 
                                 c_btn1, c_btn2 = st.columns([3, 1])
                                 
-                                if c_btn1.button("💾 Atualizar Dados", type="primary", use_container_width=False):
+                                if c_btn1.button("💾 Atualizar Dados", type="primary", width="content"):
                                     if not novo_wo.strip() or not novo_nome.strip():
                                         st.error("A WO e o Produto não podem ficar em branco.")
                                     else:
@@ -1572,7 +1580,7 @@ elif menu_selecionado == "📋 Ordens de Produção":
                                         time_sys.sleep(1.5)
                                         st.rerun()
                                         
-                                if c_btn2.button("🗑️ Excluir Ordem", use_container_width=False):
+                                if c_btn2.button("🗑️ Excluir Ordem", width="content"):
                                     cursor.execute("DELETE FROM projetos WHERE so=%s AND wo=%s", (so_clean, wo_clean_edit))
                                     cursor.execute("DELETE FROM planejamento WHERE so=%s AND wo=%s", (so_clean, wo_clean_edit))
                                     conn.commit()
@@ -1585,7 +1593,7 @@ elif menu_selecionado == "📋 Ordens de Produção":
                     st.info("Nenhuma ordem ativa encontrada.")
 
         st.markdown("### 📊 Ordens Registradas")
-        st.dataframe(pd.read_sql_query("SELECT so, wo, item, linha, customer, product_name, qtde, horas_vendidas, status_producao FROM projetos", engine), use_container_width=True, height=400)
+        st.dataframe(pd.read_sql_query("SELECT so, wo, item, linha, customer, product_name, qtde, horas_vendidas, status_producao FROM projetos", engine), width="stretch", height=400)
 
 
 # ------------------------------------------
@@ -1664,7 +1672,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                                     st.warning(f"⚠️ Atenção: A {unidade_plan_sel} desta WO já possui planejamento para: {nomes_ja}. Utilize o Replanejamento ao lado para limpar antes de prosseguir se desejar refazer.")
                                     alerta_duplicidade = True
                                     
-                                if st.button("💾 Executar Planejamento Reverso", type="primary", use_container_width=False):
+                                if st.button("💾 Executar Planejamento Reverso", type="primary", width="content"):
                                     if not ops_selecionados:
                                         st.error("❌ Selecione pelo menos um operador.")
                                     elif alerta_duplicidade:
@@ -1773,7 +1781,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                         wo_und_replan = st.selectbox("2. Selecione a WO e Unidade para excluir:", wos_list_formatada, key="wo_und_replan")
                         
                         if wo_und_replan != "- Selecione -":
-                            if st.button("🗑️ Excluir Cronograma do Período", use_container_width=False):
+                            if st.button("🗑️ Excluir Cronograma do Período", width="content"):
                                 parte_esq, parte_dir = wo_und_replan.split(" | Unidade: ")
                                 wo_excluir = parte_esq.split(" - ")[0].strip()
                                 und_excluir = parte_dir.strip()
@@ -2023,7 +2031,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
             df_export = df_export[[c for c in cols_map.keys() if c in df_export.columns]].rename(columns=cols_map)
             df_export = df_export.sort_values(by=['Data Planejada', 'Linha de Produção', 'Operador'])
             
-            st.dataframe(df_export, use_container_width=True)
+            st.dataframe(df_export, width="stretch")
             
             output_plan = io.BytesIO()
             with pd.ExcelWriter(output_plan, engine='openpyxl') as writer:
@@ -2034,7 +2042,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                 data=output_plan.getvalue(), 
                 file_name=f"Cronograma_PCP_{date.today().strftime('%Y%m%d')}.xlsx", 
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
+                width="stretch"
             )
             
         st.markdown("---")
@@ -2151,7 +2159,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
             fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['horas_planejadas'], name='Demanda Planejada', marker_color='#004a99', offsetgroup=1, base=0))
             
             fig_bal.update_layout(barmode='group', title="Gargalos e Ociosidade por Setor", yaxis_title="Horas", height=350, margin=dict(t=30, b=10))
-            st.plotly_chart(fig_bal, use_container_width=True, key="bar_balanco_capacidade")
+            st.plotly_chart(fig_bal, width="stretch", key="bar_balanco_capacidade")
             
         else:
             st.info("Selecione um período no filtro do Gantt para visualizar o balanço de capacidade.")
@@ -2249,11 +2257,11 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                                      xaxis_title="", yaxis_title="Horas Operacionais",
                                      height=380, margin=dict(t=30, b=10),
                                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
-                st.plotly_chart(fig_ad, use_container_width=True, key="bar_aderencia_plan_final")
+                st.plotly_chart(fig_ad, width="stretch", key="bar_aderencia_plan_final")
                 
                 with st.expander("Ver Tabela Detalhada Diária (Aderência)"):
                     df_aderencia['Desvio (h)'] = df_aderencia['horas_realizadas'] - df_aderencia['horas_planejadas']
-                    st.dataframe(df_aderencia[['data_iso', 'nome', 'linha', 'wo', 'unidade', 'horas_planejadas', 'horas_realizadas', 'Desvio (h)']], use_container_width=True)
+                    st.dataframe(df_aderencia[['data_iso', 'nome', 'linha', 'wo', 'unidade', 'horas_planejadas', 'horas_realizadas', 'Desvio (h)']], width="stretch")
             else:
                 st.info("Nenhum dado de planejamento ou apontamento para colaboradores ativos neste período.")
         else:
@@ -2305,7 +2313,7 @@ elif menu_selecionado == "🔍 Manutenção":
                 """, unsafe_allow_html=True)
                 
                 f_xlsx = st.file_uploader("Selecione a Planilha (.xlsx)", type=["xlsx"])
-                if f_xlsx and st.button("🚀 EXECUTAR IMPORTAÇÃO", use_container_width=True):
+                if f_xlsx and st.button("🚀 EXECUTAR IMPORTAÇÃO", width="stretch"):
                     try:
                         df_up = pd.read_excel(f_xlsx)
                         df_up.columns = guias[op_c]
@@ -2333,7 +2341,7 @@ elif menu_selecionado == "🔍 Manutenção":
                 st.write("**Histórico de Vigências de Jornada**")
                 df_param = pd.read_sql_query("SELECT * FROM parametros_jornada ORDER BY data_inicio DESC", engine)
                 df_param = padronizar_datas_para_tela(df_param, ['data_inicio', 'data_fim'])
-                st.dataframe(df_param, use_container_width=True)
+                st.dataframe(df_param, width="stretch")
                 
                 st.markdown("---")
                 st.write("**Cadastrar Nova Regra de Jornada**")
@@ -2363,7 +2371,7 @@ elif menu_selecionado == "🔍 Manutenção":
                     if not colab_ativos.empty:
                         mat_dem = st.selectbox("Selecione o Colaborador:", [f"{r['matricula']} - {r['nome']}" for _, r in colab_ativos.iterrows()])
                         d_dem = st.date_input("Data de Desligamento", date.today(), format="DD/MM/YYYY")
-                        if st.button("💾 Registrar Desligamento", use_container_width=True):
+                        if st.button("💾 Registrar Desligamento", width="stretch"):
                             cursor.execute("UPDATE colaboradores SET data_demissao = %s WHERE matricula = %s", (d_dem.strftime("%Y-%m-%d"), mat_dem.split(" - ")[0]))
                             conn.commit()
                             st.success("Desligamento registrado!"); st.rerun()
@@ -2373,7 +2381,7 @@ elif menu_selecionado == "🔍 Manutenção":
                     st.write("**Lista Geral de Colaboradores**")
                     df_colab_view = pd.read_sql_query("SELECT * FROM colaboradores", engine)
                     df_colab_view = padronizar_datas_para_tela(df_colab_view, ['data_admissao', 'data_demissao'])
-                    st.dataframe(df_colab_view, use_container_width=True)
+                    st.dataframe(df_colab_view, width="stretch")
             
             elif cat_manut == "Férias":
                 c_f1, c_f2 = st.columns([1, 2])
@@ -2383,48 +2391,48 @@ elif menu_selecionado == "🔍 Manutenção":
                     mat_f = st.selectbox("Colaborador:", [f"{r['matricula']} - {r['nome']}" for _, r in colab_df.iterrows()])
                     d_ini = st.date_input("Data de Início", date.today(), format="DD/MM/YYYY")
                     d_fim = st.date_input("Data de Fim", date.today() + timedelta(days=30), format="DD/MM/YYYY")
-                    if st.button("💾 Salvar Período", use_container_width=True):
+                    if st.button("💾 Salvar Período", width="stretch"):
                         cursor.execute("INSERT INTO ferias_colaboradores (matricula, data_inicio, data_fim) VALUES (%s,%s,%s)", (mat_f.split(" - ")[0], d_ini.strftime("%Y-%m-%d"), d_fim.strftime("%Y-%m-%d")))
                         conn.commit(); st.success("Férias registradas!"); st.rerun()
                 with c_f2:
                     st.write("**Períodos Cadastrados**")
                     df_ferias_view = pd.read_sql_query("SELECT * FROM ferias_colaboradores", engine)
                     df_ferias_view = padronizar_datas_para_tela(df_ferias_view, ['data_inicio', 'data_fim'])
-                    st.dataframe(df_ferias_view, use_container_width=True)
+                    st.dataframe(df_ferias_view, width="stretch")
                     
             elif cat_manut == "Feriados":
                 df_feriados_view = pd.read_sql_query("SELECT * FROM feriados", engine)
                 df_feriados_view = padronizar_datas_para_tela(df_feriados_view, ['data'])
-                st.dataframe(df_feriados_view, use_container_width=True)
+                st.dataframe(df_feriados_view, width="stretch")
                 
             elif cat_manut == "Calendário Lucy":
                 df_cal_view = pd.read_sql_query("SELECT * FROM calendario_lucy", engine)
                 df_cal_view = padronizar_datas_para_tela(df_cal_view, ['start_date', 'end_date'])
-                st.dataframe(df_cal_view, use_container_width=True)
+                st.dataframe(df_cal_view, width="stretch")
                 
             elif cat_manut == "Configurações (Erros e Paradas)":
                 cf1, cf2, cf3 = st.columns(3)
                 with cf1:
                     st.write("**Categorias de Parada**")
                     add_p = st.text_input("Nova Parada:")
-                    if st.button("Salvar Parada", use_container_width=True) and add_p:
+                    if st.button("Salvar Parada", width="stretch") and add_p:
                         cursor.execute("INSERT INTO categorias_parada (categoria) VALUES (%s) ON CONFLICT (categoria) DO NOTHING", (add_p,))
                         conn.commit(); st.rerun()
-                    st.dataframe(pd.read_sql_query("SELECT * FROM categorias_parada", engine), use_container_width=True)
+                    st.dataframe(pd.read_sql_query("SELECT * FROM categorias_parada", engine), width="stretch")
                 with cf2:
                     st.write("**Tipos de Erro**")
                     add_e = st.text_input("Novo Erro:")
-                    if st.button("Salvar Erro", use_container_width=True) and add_e:
+                    if st.button("Salvar Erro", width="stretch") and add_e:
                         cursor.execute("INSERT INTO tipos_erro (erro) VALUES (%s) ON CONFLICT (erro) DO NOTHING", (add_e,))
                         conn.commit(); st.rerun()
-                    st.dataframe(pd.read_sql_query("SELECT * FROM tipos_erro", engine), use_container_width=True)
+                    st.dataframe(pd.read_sql_query("SELECT * FROM tipos_erro", engine), width="stretch")
                 with cf3:
                     st.write("**Causadores**")
                     add_c = st.text_input("Novo Causador:")
-                    if st.button("Salvar Causador", use_container_width=True) and add_c:
+                    if st.button("Salvar Causador", width="stretch") and add_c:
                         cursor.execute("INSERT INTO causadores_erro (causador) VALUES (%s) ON CONFLICT (causador) DO NOTHING", (add_c,))
                         conn.commit(); st.rerun()
-                    st.dataframe(pd.read_sql_query("SELECT * FROM causadores_erro", engine), use_container_width=True)
+                    st.dataframe(pd.read_sql_query("SELECT * FROM causadores_erro", engine), width="stretch")
 
 # ------------------------------------------
 # ABA: RELATÓRIOS PDF 
@@ -2453,7 +2461,7 @@ elif menu_selecionado == "📑 Relatórios PDF":
                 
             so_pdf_sel = st.selectbox("Selecione a Ordem de Venda (SO) para o Relatório:", list(dict.fromkeys(opcoes_so)))
 
-            if st.button("⚙️ Processar e Gerar PDF", type="primary", use_container_width=True):
+            if st.button("⚙️ Processar e Gerar PDF", type="primary", width="stretch"):
                 try:
                     from fpdf import FPDF
                     
@@ -2597,7 +2605,7 @@ elif menu_selecionado == "📑 Relatórios PDF":
                         try: pdf_bytes = pdf.output(dest='S').encode('latin-1')
                         except: pdf_bytes = bytes(pdf.output())
 
-                        st.download_button(label="📥 Baixar PDF do Relatório", data=pdf_bytes, file_name=f"Relatorio_Perdas_SO_{so_clean}.pdf", mime="application/pdf", use_container_width=True)
+                        st.download_button(label="📥 Baixar PDF do Relatório", data=pdf_bytes, file_name=f"Relatorio_Perdas_SO_{so_clean}.pdf", mime="application/pdf", width="stretch")
                         st.success("✔️ Relatório Inteligente compilado com sucesso!")
 
                 except ImportError:
