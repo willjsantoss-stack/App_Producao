@@ -1642,7 +1642,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
         col_plan1, col_plan2 = st.columns(2)
         with col_plan1:
             with st.container(border=True):
-                st.markdown("### ➕ Planejamento Reverso (MRP Preditivo)")
+                st.markdown("### ➕ Planejamento Preditivo (MRP)")
                 
                 df_wo_ativas = pd.read_sql_query("SELECT so, wo, linha, customer, product_name, qtde, horas_vendidas FROM projetos WHERE UPPER(TRIM(status_producao)) != 'FINALIZADO' OR status_producao IS NULL", engine)
                 df_planejados = pd.read_sql_query("SELECT DISTINCT wo FROM planejamento", engine)
@@ -1699,7 +1699,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
 
                                 ops_selecionados = st.multiselect("5. Operador(es)", lista_ops, key="ops_sel_mrp_mult")
 
-                                data_entrega = st.date_input("6. Data de Entrega (Deadline)", date.today() + timedelta(days=7), format="DD/MM/YYYY", key="dt_ent_mrp_input")
+                                data_referencia = st.date_input("6. Data de Referência (Início ou Entrega)", date.today() + timedelta(days=7), format="DD/MM/YYYY", key="dt_ref_mrp_input")
 
                                 alerta_duplicidade = False
                                 ja_planejado = pd.read_sql_query("SELECT DISTINCT c.nome FROM planejamento p JOIN colaboradores c ON p.matricula = c.matricula WHERE p.wo = %(wo)s AND p.unidade = %(und)s", engine, params={"wo": wo_clean, "und": unidade_plan_sel})
@@ -1708,12 +1708,19 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                                     st.warning(f"⚠️ Atenção: A {unidade_plan_sel} desta WO já possui planejamento para: {nomes_ja}. Utilize o Replanejamento ao lado para limpar antes de prosseguir se desejar refazer.")
                                     alerta_duplicidade = True
                                     
-                                if st.button("💾 Executar Planejamento Reverso", type="primary", width="content"):
+                                col_b1, col_b2 = st.columns(2)
+                                btn_reverso = col_b1.button("⏪ Planejar P/ Trás (Reverso)", type="primary", width="stretch", help="A data escolhida acima será o prazo final.")
+                                btn_direto = col_b2.button("⏩ Planejar P/ Frente (Direto)", type="primary", width="stretch", help="A data escolhida acima será o dia de início.")
+
+                                if btn_reverso or btn_direto:
                                     if not ops_selecionados:
                                         st.error("❌ Selecione pelo menos um operador.")
                                     elif alerta_duplicidade:
                                         st.error("❌ Limpe o planejamento antigo desta WO/Unidade antes de refazer a alocação.")
                                     else:
+                                        passo_dias = -1 if btn_reverso else 1
+                                        nome_estrategia = "Reverso" if btn_reverso else "Direto"
+                                        
                                         so_plan = so_sel_plan
                                         horas_por_op = horas_totais_com_fator / len(ops_selecionados)
                                         
@@ -1724,7 +1731,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                                             mat_plan = op.split(" - ")[0]
                                             nome_op = op.split(" - ")[1]
                                             horas_restantes = horas_por_op
-                                            data_atual_loop = data_entrega
+                                            data_atual_loop = data_referencia
                                             
                                             loop_seguro = 0 
                                             while horas_restantes > 0.01 and loop_seguro < 365:
@@ -1740,7 +1747,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                                                 em_ferias = cursor.fetchone()
                                                 
                                                 if is_100 or em_ferias: 
-                                                    data_atual_loop -= timedelta(days=1) 
+                                                    data_atual_loop += timedelta(days=passo_dias) 
                                                     continue
                                                 
                                                 cursor.execute("SELECT SUM(horas_normais) FROM apontamentos WHERE matricula = %s AND data_registro = %s AND tipo IN ('Atestado / Justificada', 'Falta/Atraso')", (mat_plan, data_br_loop))
@@ -1752,7 +1759,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                                                 
                                                 if ja_ocupado_dia > 0:
                                                     datas_protegidas_alerta.append(f"{nome_op} ({data_br_loop})")
-                                                    data_atual_loop -= timedelta(days=1)
+                                                    data_atual_loop += timedelta(days=passo_dias)
                                                     continue
                                                     
                                                 c_sq, c_sx, _, _ = obter_parametros_dia(conn, data_atual_loop)
@@ -1761,7 +1768,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                                                 cap_dia -= ausencia_agendada
                                                 
                                                 if cap_dia <= 0.05:
-                                                    data_atual_loop -= timedelta(days=1) 
+                                                    data_atual_loop += timedelta(days=passo_dias) 
                                                     continue
                                                 
                                                 cursor.execute("SELECT SUM(horas_planejadas) FROM planejamento WHERE matricula = %s AND data_planejada = %s AND wo = %s", (mat_plan, data_iso_loop, wo_clean))
@@ -1771,7 +1778,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                                                 cap_disponivel = cap_dia - ja_plan_mesmo_projeto
                                                 
                                                 if cap_disponivel <= 0:
-                                                    data_atual_loop -= timedelta(days=1) 
+                                                    data_atual_loop += timedelta(days=passo_dias) 
                                                     continue
                                                     
                                                 alocar_agora = min(cap_disponivel, horas_restantes)
@@ -1781,13 +1788,13 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                                                 horas_restantes -= alocar_agora
                                                 
                                                 if horas_restantes > 0.01:
-                                                    data_atual_loop -= timedelta(days=1) 
+                                                    data_atual_loop += timedelta(days=passo_dias) 
                                                     
                                         for aloc in alocacoes_temp:
                                             cursor.execute("INSERT INTO planejamento (data_planejada, matricula, so, wo, unidade, horas_planejadas) VALUES (%s,%s,%s,%s,%s,%s)", aloc)
                                         conn.commit()
                                         
-                                        st.success("✔️ Planejamento Sequencial gravado com sucesso!")
+                                        st.success(f"✔️ Planejamento {nome_estrategia} gravado com sucesso!")
                                         if datas_protegidas_alerta:
                                             st.info(f"⚠️ **Alerta de Proteção PCP:** O sistema realocou a produção desviando das datas já ocupadas ou com ausências médicas de: {', '.join(set(datas_protegidas_alerta))}")
                                         
