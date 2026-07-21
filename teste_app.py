@@ -1930,7 +1930,15 @@ elif menu_selecionado == "📅 Planejamento de Carga":
             
             if so_iso_sel != "- Mostrar Todos os Projetos (Fábrica) -":
                 so_clean_iso = so_iso_sel.split(" - ")[0].strip()
-                df_gantt_raw = df_gantt_raw[(df_gantt_raw['so'] == so_clean_iso) | (df_gantt_raw['so'] == '⏸️ AFASTAMENTO')]
+                
+                # 1. Identifica quais operadores estão alocados neste projeto específico
+                ops_do_projeto = df_gantt_raw[df_gantt_raw['so'] == so_clean_iso]['operador'].unique()
+                
+                # 2. Filtra o Gantt para mostrar apenas o projeto E as ausências exclusivas dessa equipe
+                df_gantt_raw = df_gantt_raw[
+                    (df_gantt_raw['so'] == so_clean_iso) | 
+                    ((df_gantt_raw['so'] == '⏸️ AFASTAMENTO') & (df_gantt_raw['operador'].isin(ops_do_projeto)))
+                ]
         else:
             st.selectbox("🔍 Isolar Caminho de um Projeto (SO):", ["- Sem Planejamentos Ativos -"], disabled=True, key="so_iso_sel_gantt_filtro_vazio")
             
