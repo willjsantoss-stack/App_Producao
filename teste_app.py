@@ -10,6 +10,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import psycopg2
 from sqlalchemy import create_engine
+import requests
+from io import BytesIO
+from supabase import create_client, Client
 
 # ==========================================
 # 1. CONFIGURAÇÕES E DIRETÓRIOS
@@ -40,6 +43,16 @@ try:
 except Exception as e:
     st.error(f"Erro ao conectar ao banco de dados: {e}")
     st.stop()
+
+# ==========================================
+# 2.1 CONEXÃO COM O SUPABASE STORAGE (FOTOS)
+# ==========================================
+url_supa = st.secrets["SUPABASE_URL"]
+if url_supa.endswith("/rest/v1/"): 
+    url_supa = url_supa.replace("/rest/v1/", "") # Limpa a URL automaticamente
+    
+key_supa = st.secrets["SUPABASE_KEY"]
+supabase_client: Client = create_client(url_supa, key_supa)
 
 # Função que empacota a criação das tabelas para não dar o NameError
 # Função que empacota a criação das tabelas para não dar o NameError
@@ -311,17 +324,22 @@ def limpa_texto_pdf(texto):
     return texto.encode('latin-1', 'replace').decode('latin-1')
 
 def preparar_imagem_pdf(caminho):
-    if not caminho or caminho == 'N/A': return None
+    if not caminho or caminho == 'N/A': return None 
     
-    # MÁGICA AQUI: Pega apenas o nome da foto (ex: foto_antes.jpg) e ignora o caminho velho do C:\
-    nome_arquivo = os.path.basename(str(caminho).replace('\\', '/'))
-    caminho_real = os.path.join(PASTA_FOTOS, nome_arquivo)
-    
-    if not os.path.exists(caminho_real) or os.path.getsize(caminho_real) == 0: 
-        return None 
-        
     try:
-        img = Image.open(caminho_real)
+        if str(caminho).startswith("http"):
+            # Nova lógica: Baixa a foto direto do Supabase Storage
+            response = requests.get(caminho)
+            if response.status_code != 200: return None
+            img = Image.open(BytesIO(response.content))
+        else:
+            # Lógica antiga (Retrocompatibilidade): Lê o arquivo antigo salvo localmente
+            nome_arquivo = os.path.basename(str(caminho).replace('\\', '/'))
+            caminho_real = os.path.join(PASTA_FOTOS, nome_arquivo)
+            if not os.path.exists(caminho_real) or os.path.getsize(caminho_real) == 0: 
+                return None 
+            img = Image.open(caminho_real)
+
         if img.mode != 'RGB': img = img.convert('RGB')
         target_ratio = 4 / 3
         img_ratio = img.width / img.height
@@ -334,11 +352,15 @@ def preparar_imagem_pdf(caminho):
             offset = (img.height - new_h) / 2
             img = img.crop((0, offset, img.width, offset + new_h))
             
-        caminho_pdf = caminho_real.replace(".jpg", "_pdf.jpg").replace(".png", "_pdf.jpg").replace(".jpeg", "_pdf.jpg")
         img = img.resize((800, 600))
+        
+        # Salva a imagem processada temporariamente para o FPDF conseguir ler
+        caminho_pdf = os.path.join(PASTA_FOTOS, f"temp_pdf_{int(time_sys.time() * 1000)}.jpg")
         img.save(caminho_pdf, "JPEG", quality=85)
         return caminho_pdf
-    except Exception: return None
+    except Exception as e: 
+        print(f"Erro ao processar imagem: {e}")
+        return None
 
 # ==========================================
 # 4. SIDEBAR OPERACIONAL
@@ -650,10 +672,24 @@ if menu_selecionado == "📝 Lançamentos":
                         
                         if tipo_ap == "Retrabalho" and foto_antes and foto_depois:
                             timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-                            path_f_antes = os.path.join(PASTA_FOTOS, f"{timestamp}_{so_id_db}_ANTES.jpg")
-                            path_f_depois = os.path.join(PASTA_FOTOS, f"{timestamp}_{so_id_db}_DEPOIS.jpg")
-                            with open(path_f_antes, "wb") as f: f.write(foto_antes.getbuffer())
-                            with open(path_f_depois, "wb") as f: f.write(foto_depois.getbuffer())
+                            nome_antes = f"{timestamp}_{so_id_db}_ANTES.jpg"
+                            nome_depois = f"{timestamp}_{so_id_db}_DEPOIS.jpg"
+                            
+                            # 1. Faz o upload da foto em bytes direto para o seu Bucket
+                            supabase_client.storage.from_("fotos_retrabalho").upload(
+                                file=foto_antes.getvalue(), 
+                                path=nome_antes, 
+                                file_options={"content-type": "image/jpeg"}
+                            )
+                            supabase_client.storage.from_("fotos_retrabalho").upload(
+                                file=foto_depois.getvalue(), 
+                                path=nome_depois, 
+                                file_options={"content-type": "image/jpeg"}
+                            )
+                            
+                            # 2. Pega a URL pública permanente gerada pelo Supabase
+                            path_f_antes = supabase_client.storage.from_("fotos_retrabalho").get_public_url(nome_antes)
+                            path_f_depois = supabase_client.storage.from_("fotos_retrabalho").get_public_url(nome_depois)
                         
                         if fora_do_plano:
                             obs = f"{obs}\n[⚠️ DESVIO PCP]: {motivo_desvio}".strip()
