@@ -1542,25 +1542,31 @@ elif menu_selecionado == "📋 Ordens de Produção":
                 
                 with st.form("form_nova_wo", clear_on_submit=True):
                     so_n = st.text_input("Sales Order (SO)*")
-                    wo_n = st.text_input("Work Order (WO)*")
-                    item_n = st.text_input("Item*") 
+                    wo_n = st.text_input("Work Order (WO) - Deixe em branco para Reserva de Slot")
+                    item_n = st.text_input("Item (Opcional)") 
                     linha_n = st.selectbox("Linha de Produção Predominante*", ["- Selecione -"] + linhas_disponiveis)
                     cli_n = st.text_input("Cliente*")
-                    prod_n = st.text_input("Nome do Produto*")
+                    prod_n = st.text_input("Nome do Produto / Descrição da Reserva*")
                     
                     qtd_n = st.number_input("Quantidade*", min_value=1, step=1)
-                    hr_ven = st.number_input("Horas Vendidas*", min_value=0.0, step=0.5, value=0.0)
+                    hr_ven = st.number_input("Horas Vendidas / Estimadas*", min_value=0.0, step=0.5, value=0.0)
                     
-                    if st.form_submit_button("💾 Criar Ordem", type="primary", width="content"):
-                        if not so_n or not wo_n or not item_n or not cli_n or not prod_n or linha_n == "- Selecione -" or hr_ven <= 0:
-                            st.error("❌ Preencha os campos obrigatórios (*). As Horas Vendidas devem ser maiores que zero.")
+                    if st.form_submit_button("💾 Criar Ordem / Reserva", type="primary", width="content"):
+                        if not so_n or not cli_n or not prod_n or linha_n == "- Selecione -" or hr_ven <= 0:
+                            st.error("❌ Preencha os campos obrigatórios (*). As Horas Vendidas/Estimadas devem ser maiores que zero.")
                         else:
+                            # MÁGICA AQUI: Gera WO temporária se ficar em branco e define status especial
+                            is_reserva = not wo_n.strip()
+                            wo_final = f"RES-{int(time_sys.time() % 100000)}" if is_reserva else wo_n.strip()
+                            item_final = "-" if not item_n.strip() else item_n.strip()
+                            status_inicial = "Reserva Estratégica" if is_reserva else "Não iniciada"
+                            
                             cursor.execute("""
                                 INSERT INTO projetos (so, wo, linha, customer, item, product_name, qtde, status_producao, horas_vendidas) 
                                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                            """, (so_n.strip(), wo_n.strip(), linha_n, cli_n.strip(), item_n.strip(), prod_n.strip(), qtd_n, "Não iniciada", hr_ven))
+                            """, (so_n.strip(), wo_final, linha_n, cli_n.strip(), item_final, prod_n.strip(), qtd_n, status_inicial, hr_ven))
                             conn.commit()
-                            st.success("✔️ Ordem de Produção registrada!")
+                            st.success(f"✔️ {'Reserva de Slot' if is_reserva else 'Ordem de Produção'} registrada com sucesso!")
                             st.rerun()
 
         with col_ord2:
