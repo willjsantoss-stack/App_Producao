@@ -629,7 +629,7 @@ if menu_selecionado == "📝 Lançamentos":
             fora_do_plano = False
             motivo_desvio = ""
             
-            if colab_sel != "- Selecione -" and tipo_ap in ["Produção Normal", "Retrabalho"]:
+            if colab_sel != "- Selecione -" and tipo_ap == "Produção Normal":
                 mat_eval = colab_sel.split(" - ")[0]
                 data_iso_eval = data_lan.strftime("%Y-%m-%d")
                 
