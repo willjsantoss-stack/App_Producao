@@ -845,8 +845,9 @@ if menu_selecionado == "📝 Lançamentos":
                     
                     if not filtro_ap.empty:
                         row_apont = filtro_ap.iloc[0]
-                        st.info(f"**Detalhes do Apontamento:**\n\n**WO:** {row_apont['wo']} | **Atividade:** {row_apont['atividade']} | **Obs:** {row_apont['descricao']}")
+                        st.info(f"**Detalhes Atuais:**\n\n**WO:** {row_apont['wo']} | **Tipo:** {row_apont['tipo']}")
                         
+                        # --- CÓDIGO ATUALIZADO AQUI ---
                         c_e1, c_e2 = st.columns(2)
                         try:
                             hi_edit_val = datetime.strptime(row_apont['hora_inicio'], "%H:%M:%S").time()
@@ -861,23 +862,33 @@ if menu_selecionado == "📝 Lançamentos":
                         hi_edit = c_e1.time_input("Nova Hora de Início", value=hi_edit_val, step=60, key="hi_edit")
                         hf_edit = c_e2.time_input("Nova Hora de Fim", value=hf_edit_val, step=60, key="hf_edit")
                         
+                        # NOVO CAMPO: Traz a descrição atual do banco e permite edição
+                        desc_atual = row_apont['descricao'] if pd.notna(row_apont['descricao']) else ""
+                        nova_obs = st.text_area("Editar Observação / Descrição (Motivo do Retrabalho)", value=desc_atual, key="obs_edit_apont")
+                        
                         st.write("")
                         c_btn_e1, c_btn_e2 = st.columns([1, 1])
-                        if c_btn_e1.button("💾 Salvar Novo Horário", type="primary", width="stretch"):
-                            cursor.execute("UPDATE apontamentos SET hora_inicio=%s, hora_fim=%s WHERE id=%s", (str(hi_edit), str(hf_edit), id_apont))
+                        
+                        if c_btn_e1.button("💾 Salvar Alterações (Horário/Obs)", type="primary", use_container_width=True):
+                            # Atualiza a Query SQL para gravar a nova_obs também
+                            cursor.execute(
+                                "UPDATE apontamentos SET hora_inicio=%s, hora_fim=%s, descricao=%s WHERE id=%s", 
+                                (str(hi_edit), str(hf_edit), nova_obs, id_apont)
+                            )
                             conn.commit()
                             recalcular_dia(conn, row_apont['matricula'], data_br_edit)
-                            st.success("✔️ Horário atualizado e recálculo efetuado com sucesso!")
+                            st.success("✔️ Apontamento e Observação atualizados com sucesso!")
                             time_sys.sleep(1.5)
                             st.rerun()
                             
-                        if c_btn_e2.button("🗑️ Excluir Apontamento", width="stretch"):
+                        if c_btn_e2.button("🗑️ Excluir Apontamento", use_container_width=True):
                             cursor.execute("DELETE FROM apontamentos WHERE id=%s", (id_apont,))
                             conn.commit()
                             recalcular_dia(conn, row_apont['matricula'], data_br_edit)
                             st.success("✔️ Apontamento excluído da base e auditoria reprocessada!")
                             time_sys.sleep(1.5)
                             st.rerun()
+                            
                     else:
                         st.error("Apontamento não encontrado no banco de dados.")
             else:
