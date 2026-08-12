@@ -74,6 +74,56 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS parametros_jornada (id SERIAL PRIMARY KEY, data_inicio TEXT, data_fim TEXT, carga_seg_qui NUMERIC, carga_sexta NUMERIC, hora_saida_seg_qui TEXT, hora_saida_sexta TEXT)')
     cursor.execute('CREATE TABLE IF NOT EXISTS planejamento (id SERIAL PRIMARY KEY, data_planejada TEXT, matricula TEXT, so TEXT, wo TEXT, unidade TEXT DEFAULT \'Geral\', horas_planejadas NUMERIC)')
 
+
+    # 1. TABELA DE PROJETISTAS
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS projetistas (
+            id SERIAL PRIMARY KEY,
+            nome TEXT,
+            especialidade TEXT
+        )
+    ''')
+    
+    # Pré-cadastrar a sua equipe automaticamente se a tabela estiver vazia
+    cursor.execute("SELECT COUNT(*) FROM projetistas")
+    if cursor.fetchone()[0] == 0:
+        equipe = [
+            ('Juliana', 'Elétrica'), ('Peterson', 'Elétrica'), ('Giliard', 'Elétrica'), ('Marilia', 'Elétrica'),
+            ('Rafael', 'Mecânica'), ('Arnaldo', 'Mecânica'), ('Daniel', 'Mecânica')
+        ]
+        for p in equipe:
+            cursor.execute("INSERT INTO projetistas (nome, especialidade) VALUES (%s, %s)", p)
+
+    # 2. TABELA DE FASES DO KANBAN E MARCOS
+    # Servirá tanto para a Engenharia quanto para a Fábrica
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS kanban_fases (
+            id SERIAL PRIMARY KEY,
+            wo TEXT,
+            categoria TEXT, -- "Engenharia" ou "Fábrica"
+            fase TEXT, -- Ex: "Projeto Elétrico", "Montagem Mecânica"
+            responsavel TEXT, -- Nome do projetista ou setor
+            data_inicio TIMESTAMP,
+            data_fim TIMESTAMP,
+            status TEXT -- "Em Andamento", "Concluído"
+        )
+    ''')
+
+    # 3. TABELA DE GESTÃO DE MATERIAIS FALTANTES (Com campos obrigatórios)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS kanban_materiais (
+            id SERIAL PRIMARY KEY,
+            wo TEXT,
+            codigo TEXT,
+            descricao TEXT,
+            quantidade INTEGER,
+            data_apontamento TIMESTAMP,
+            data_prevista_chegada DATE,
+            data_recebimento DATE,
+            status TEXT -- "Faltante", "Recebido"
+        )
+    ''')
+
     cursor.execute("SELECT COUNT(*) FROM parametros_jornada")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO parametros_jornada (data_inicio, data_fim, carga_seg_qui, carga_sexta, hora_saida_seg_qui, hora_saida_sexta) VALUES (%s, %s, %s, %s, %s, %s)", 
