@@ -2606,11 +2606,11 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                                     time_sys.sleep(1); st.rerun()
 
     # ==========================================
-    # TIMELINE E MARCOS DO PROJETO (Fase 4 - Evoluída)
+    # TIMELINE E MARCOS DO PROJETO (Estilo Pin Moderno)
     # ==========================================
     with tab_timeline:
         st.markdown("### 📈 Análise de Ciclo de Vida do Projeto (Timeline)")
-        st.write("Visão consolidada por **Projeto (SO)**: inclui as entregas da Engenharia, o fluxo de todas as WOs vinculadas, recebimento de materiais e ocorrências de Perdas (Retrabalhos e Paradas).")
+        st.write("Visão consolidada por **Projeto (SO)**: fluxo de entregas, marcos logísticos com pins arredondados e ocorrências de Perdas (Retrabalhos e Paradas).")
         
         df_so_timeline = pd.read_sql_query("SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL", engine)
         
@@ -2664,6 +2664,7 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                 """, engine, params={"so": so_selecionada})
                 
                 if not df_fases_tl.empty:
+                    df_fases_tl['Texto_Barra'] = df_fases_tl['fase'] + " (" + df_fases_tl['identificador'] + ")"
                     df_fases_tl['Label_Hover'] = df_fases_tl['identificador'] + " | Resp: " + df_fases_tl['responsavel']
                     
                     cores_map = {
@@ -2680,22 +2681,49 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                         y="fase", 
                         color="categoria",
                         hover_name="Label_Hover",
+                        text="Texto_Barra",
                         color_discrete_map=cores_map,
                         title=f"Evolução Histórica do Projeto SO: {so_selecionada}"
                     )
                     
-                    fig_tl.update_yaxes(autorange="reversed")
-                    fig_tl.update_layout(height=max(400, len(df_fases_tl['fase'].unique()) * 40), margin=dict(t=40, b=20))
+                    fig_tl.update_traces(textposition='inside', textfont_size=12, marker_line_color='black', marker_line_width=0.5)
+                    
+                    fases_ordenadas = list(df_fases_tl['fase'].unique())
                     
                     if not df_mats_tl.empty:
-                        for _, mat in df_mats_tl.iterrows():
-                            if pd.notna(mat['data_recebimento']):
-                                data_mat = pd.to_datetime(mat['data_recebimento'])
-                                fig_tl.add_vline(
-                                    x=data_mat.timestamp() * 1000, 
-                                    line_width=2, line_dash="dash", line_color="#856404",
-                                    annotation_text=f"📦 Rec: {mat['codigo']}", annotation_position="top left"
-                                )
+                        df_mats_tl['data_recebimento'] = pd.to_datetime(df_mats_tl['data_recebimento'])
+                        
+                        # Adiciona a linha base central com os pins arredondados (estilo gota/pin da imagem)
+                        fig_tl.add_trace(go.Scatter(
+                            x=df_mats_tl['data_recebimento'],
+                            y=["📍 Marcos Logísticos"] * len(df_mats_tl),
+                            mode='lines+markers+text',
+                            line=dict(color='#6c757d', width=4), # Linha base horizontal cinza moderna
+                            marker=dict(symbol='circle', size=18, color='#0dcaf0', line=dict(width=2, color='#055160')), # Pins arredondados estilo infográfico
+                            text="📦 " + df_mats_tl['codigo'],
+                            textposition="top center",
+                            textfont=dict(size=11, color="black", family="sans-serif"),
+                            name="Materiais Recebidos",
+                            hoverinfo="text",
+                            hovertext="Material Recebido: " + df_mats_tl['codigo']
+                        ))
+                        
+                        for d in df_mats_tl['data_recebimento']:
+                            fig_tl.add_vline(
+                                x=d.timestamp() * 1000, 
+                                line_width=1, line_dash="dot", line_color="#adb5bd", opacity=0.8
+                            )
+                            
+                        fases_ordenadas.append("📍 Marcos Logísticos")
+                    
+                    fig_tl.update_yaxes(categoryorder="array", categoryarray=fases_ordenadas[::-1])
+                    fig_tl.update_layout(
+                        height=max(500, len(fases_ordenadas) * 65), 
+                        margin=dict(t=40, b=40),
+                        plot_bgcolor='white',
+                        xaxis=dict(showgrid=True, gridcolor='#f8f9fa', gridwidth=1),
+                        yaxis=dict(showgrid=False, title="")
+                    )
                     
                     st.plotly_chart(fig_tl, use_container_width=True)
                     
