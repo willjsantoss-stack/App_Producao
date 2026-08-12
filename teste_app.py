@@ -2545,6 +2545,16 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
         st.markdown("---")
         
         # 2. VISUALIZAÇÃO DO QUADRO KANBAN
+        
+        # --- FORÇA A ATUALIZAÇÃO DO BANCO DE DADOS (Resolve o erro da tela branca) ---
+        try:
+            cursor.execute("ALTER TABLE kanban_fases ADD COLUMN IF NOT EXISTS so TEXT;")
+            cursor.execute("ALTER TABLE kanban_fases ADD COLUMN IF NOT EXISTS data_prevista DATE;")
+            conn.commit()
+        except Exception:
+            conn.rollback() # Limpa a transação caso a coluna já exista
+        # ------------------------------------------------------------------------------
+
         # Query avançada para trazer nome do cliente para SOs e nome do produto para WOs
         df_kanban_atual = pd.read_sql_query("""
             SELECT k.id, k.so, k.wo, k.fase, k.responsavel, k.categoria, k.data_inicio, k.data_prevista, k.status,
