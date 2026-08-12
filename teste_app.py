@@ -2386,14 +2386,26 @@ elif menu_selecionado == "📅 Planejamento de Carga":
         else:
             st.info("Nenhum planejamento registrado para a escala selecionada.")
 
-# ==========================================
-    # GESTÃO DE MATERIAIS (Fase 2)
+# ------------------------------------------
+# ABA: KANBAN E TIMELINE
+# ------------------------------------------
+elif menu_selecionado == "🗂️ Kanban & Timeline":
+    st.markdown("## 🗂️ Kanban, Materiais e Timeline")
+    
+    # Carrega as WOs ativas para o usuário poder selecionar
+    df_wos_ativas = pd.read_sql_query("SELECT wo, so, product_name FROM projetos WHERE UPPER(TRIM(status_producao)) != 'FINALIZADO' OR status_producao IS NULL", engine)
+    
+    # Cria as três sub-abas principais do setor
+    tab_kanban, tab_materiais, tab_timeline = st.tabs(["📋 Quadro Kanban (Eng/Fábrica)", "📦 Gestão de Materiais", "📈 Linha do Tempo (Timeline)"])
+    
+    # ==========================================
+    # GESTÃO DE MATERIAIS (Fase 2 - Atualizada SO)
     # ==========================================
     with tab_materiais:
         st.markdown("### ⚠️ Controle de Materiais Faltantes e Recebimentos")
         st.write("Registre os materiais que travam a produção. A data de recebimento formará um marco na linha do tempo do projeto.")
         
-        # --- NOVO: Buscando apenas SOs Únicas e o nome do Cliente ---
+        # Buscando apenas SOs Únicas e o nome do Cliente
         df_sos_ativas = pd.read_sql_query("SELECT DISTINCT so, customer FROM projetos WHERE UPPER(TRIM(status_producao)) != 'FINALIZADO' OR status_producao IS NULL", engine)
         
         opcoes_projetos = []
@@ -2411,9 +2423,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                 st.markdown("#### ➕ Apontar Nova Falta")
                 
                 with st.form("form_novo_material", clear_on_submit=True):
-                    # Seletor atualizado para exibir apenas SO e Cliente
                     projeto_selecionado = st.selectbox("Sales Order (SO) / Cliente*", opcoes_projetos)
-                    
                     cod_mat = st.text_input("Código do Material*")
                     desc_mat = st.text_area("Descrição do Material*")
                     qtd_mat = st.number_input("Quantidade*", min_value=1, step=1)
@@ -2425,11 +2435,9 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                         if not cod_mat or not desc_mat or qtd_mat <= 0 or projeto_selecionado == "- Nenhum projeto ativo -":
                             st.error("❌ Projeto, Código, Descrição e Quantidade são obrigatórios!")
                         else:
-                            # Extrai apenas o número da SO (Tudo antes do traço)
                             so_extraida = projeto_selecionado.split(" - ")[0].strip()
                             dt_prev_str = dt_prev.strftime('%Y-%m-%d') if dt_prev else None
                             
-                            # Salvamos a SO na coluna 'wo' do banco para manter a arquitetura original intacta
                             cursor.execute("""
                                 INSERT INTO kanban_materiais (wo, codigo, descricao, quantidade, data_apontamento, data_prevista_chegada, status)
                                 VALUES (%s, %s, %s, %s, NOW(), %s, 'Faltante')
@@ -2447,7 +2455,6 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                 for _, row in df_mats.iterrows():
                     with st.container(border=True):
                         c_info, c_btn = st.columns([3, 1])
-                        # Exibição ajustada para mostrar a SO vinculada
                         c_info.write(f"**SO:** {row['so_vinculada']} | **Cód:** {row['codigo']}")
                         c_info.write(f"**Desc:** {row['descricao']} | **Qtd:** {row['quantidade']} un")
                         
@@ -2464,35 +2471,28 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                 st.info("🎉 Nenhum material faltante no momento. Tudo liberado!")
 
     # ==========================================
-    # ESQUELETO DO KANBAN E TIMELINE (Fase 3)
+    # KANBAN VISUAL (Fase 3)
     # ==========================================
     with tab_kanban:
         st.markdown("### 📋 Gestão Visual de Fluxo (Kanban)")
         
-        # Agrupando as fases exatas que você definiu
         fases_eng = ["Desenhos do barramento", "Projeto Elétrico", "Lista de Fiação", "Projeto Mecânico", "Separação de Material", "Solicitação de embalagem"]
         fases_fab = ["Produção do Barramento", "Impressão de identificadores", "Montagem Mecânica", "Montagem Elétrica", "Testes", "Embalagem"]
         todas_fases = ["- Selecione -"] + fases_eng + fases_fab
         
-        # 1. PAINEL DE MOVIMENTAÇÃO (O "Motor" do Kanban)
         with st.expander("🚀 Iniciar WO no Kanban ou Movimentar Cartão", expanded=False):
             col_k1, col_k2, col_k3 = st.columns(3)
             
             wo_k_sel = col_k1.selectbox("Selecione a WO:", df_wos_ativas['wo'].tolist() if not df_wos_ativas.empty else ["Nenhuma WO ativa"], key="wo_start_k")
-            
             nova_fase_k = col_k2.selectbox("Mover para a Fase:", todas_fases, key="fase_start_k")
             
-            # Carrega os projetistas da tabela
             df_proj = pd.read_sql_query("SELECT nome, especialidade FROM projetistas", engine)
             lista_responsaveis = ["Equipe de Fábrica"] + [f"{r['nome']} ({r['especialidade']})" for _, r in df_proj.iterrows()]
             responsavel_k = col_k3.selectbox("Responsável:", lista_responsaveis, key="resp_start_k")
             
             if st.button("✅ Confirmar Movimentação", type="primary", use_container_width=True):
                 if nova_fase_k != "- Selecione -":
-                    # Passo 1: Fechar a fase atual (Se existir alguma) - Isso garante o histórico de "idas e vindas"
                     cursor.execute("UPDATE kanban_fases SET data_fim = NOW(), status = 'Concluído' WHERE wo = %s AND data_fim IS NULL", (wo_k_sel,))
-                    
-                    # Passo 2: Iniciar a nova fase
                     categoria = "Engenharia" if nova_fase_k in fases_eng else "Fábrica"
                     resp_clean = responsavel_k.split(" (")[0] if responsavel_k != "Equipe de Fábrica" else "Equipe Fábrica"
                     
@@ -2510,8 +2510,6 @@ elif menu_selecionado == "📅 Planejamento de Carga":
 
         st.markdown("---")
         
-        # 2. VISUALIZAÇÃO DO QUADRO KANBAN
-        # Buscar apenas as WOs que estão ativas (data_fim é nula)
         df_kanban_atual = pd.read_sql_query("""
             SELECT k.wo, k.fase, k.responsavel, k.categoria, k.data_inicio, p.product_name 
             FROM kanban_fases k
@@ -2520,8 +2518,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
         """, engine)
 
         tipo_visao = st.radio("Filtrar Quadro por Setor:", ["Engenharia, Projetos & Logística", "Chão de Fábrica (Montagem e Testes)"], horizontal=True)
-        
-        st.write("") # Espaçamento
+        st.write("") 
         
         if tipo_visao == "Engenharia, Projetos & Logística":
             cols_eng = st.columns(len(fases_eng))
@@ -2559,33 +2556,28 @@ elif menu_selecionado == "📅 Planejamento de Carga":
         st.markdown("### 📈 Análise de Ciclo de Vida do Projeto (Timeline)")
         st.write("Acompanhe o tempo real gasto em cada setor e visualize os impactos de atraso de material.")
         
-        # Busca WOs que já têm algum histórico no Kanban
         df_wo_timeline = pd.read_sql_query("SELECT DISTINCT wo FROM kanban_fases", engine)
         
         if not df_wo_timeline.empty:
             wo_selecionada = st.selectbox("🔍 Selecione a Ordem (WO) para analisar a Timeline:", df_wo_timeline['wo'].tolist(), key="wo_timeline_sel")
             
             if wo_selecionada:
-                # 1. DADOS DAS FASES (Barras do Gráfico)
                 df_fases_tl = pd.read_sql_query(
                     "SELECT fase, responsavel, categoria, data_inicio, data_fim FROM kanban_fases WHERE wo = %s ORDER BY data_inicio", 
                     engine, params=(wo_selecionada,)
                 )
-                
-                # Se a fase ainda não acabou, usamos o tempo atual para fechar a barra até o momento de "agora"
                 df_fases_tl['data_fim_plot'] = df_fases_tl['data_fim'].fillna(pd.Timestamp.now())
                 
-                # 2. DADOS DE MATERIAL (Marcos Logísticos)
-                df_mats_tl = pd.read_sql_query(
-                    "SELECT codigo, data_recebimento FROM kanban_materiais WHERE wo = %s AND status = 'Recebido'", 
-                    engine, params=(wo_selecionada,)
-                )
+                df_mats_tl = pd.read_sql_query("""
+                    SELECT DISTINCT m.codigo, m.data_recebimento 
+                    FROM kanban_materiais m
+                    JOIN projetos p ON m.wo = p.so 
+                    WHERE p.wo = %s AND m.status = 'Recebido'
+                """, engine, params=(wo_selecionada,))
                 
                 if not df_fases_tl.empty:
-                    # Configuração de cores por Categoria (Engenharia vs Fábrica)
                     cores_map = {"Engenharia": "#004a99", "Fábrica": "#28a745"}
                     
-                    # Cria o Gráfico de Gantt da WO
                     fig_tl = px.timeline(
                         df_fases_tl, 
                         x_start="data_inicio", 
@@ -2597,17 +2589,15 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                         title=f"Evolução Histórica da WO: {wo_selecionada}"
                     )
                     
-                    # Inverte o eixo Y para a primeira fase ficar no topo
                     fig_tl.update_yaxes(autorange="reversed")
                     fig_tl.update_layout(height=400, margin=dict(t=40, b=20))
                     
-                    # INSERINDO OS MARCOS DE MATERIAL NA LINHA DO TEMPO
                     if not df_mats_tl.empty:
                         for _, mat in df_mats_tl.iterrows():
                             if pd.notna(mat['data_recebimento']):
                                 data_mat = pd.to_datetime(mat['data_recebimento'])
                                 fig_tl.add_vline(
-                                    x=data_mat.timestamp() * 1000, # Plotly requer conversão timestamp em milissegundos
+                                    x=data_mat.timestamp() * 1000,
                                     line_width=2, 
                                     line_dash="dash", 
                                     line_color="#dc3545",
@@ -2618,7 +2608,6 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                     
                     st.plotly_chart(fig_tl, use_container_width=True)
                     
-                    # Tabela de log exato
                     with st.expander("Ver Log Exato de Transições"):
                         df_fases_tl['data_inicio'] = pd.to_datetime(df_fases_tl['data_inicio']).dt.strftime('%d/%m/%Y %H:%M')
                         df_fases_tl['data_fim'] = pd.to_datetime(df_fases_tl['data_fim']).dt.strftime('%d/%m/%Y %H:%M').replace("NaT", "Em Andamento")
