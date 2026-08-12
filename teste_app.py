@@ -2467,8 +2467,81 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
     with tab_kanban:
         st.info("O Quadro Kanban visual entrará aqui na próxima fase da nossa implementação.")
         
+    # ==========================================
+    # TIMELINE E MARCOS DO PROJETO (Fase 4)
+    # ==========================================
     with tab_timeline:
-        st.info("O Gráfico de Timeline com os marcos de materiais entrará aqui na última fase.")
+        st.markdown("### 📈 Análise de Ciclo de Vida do Projeto (Timeline)")
+        st.write("Acompanhe o tempo real gasto em cada setor e visualize os impactos de atraso de material.")
+        
+        # Busca WOs que já têm algum histórico no Kanban
+        df_wo_timeline = pd.read_sql_query("SELECT DISTINCT wo FROM kanban_fases", engine)
+        
+        if not df_wo_timeline.empty:
+            wo_selecionada = st.selectbox("🔍 Selecione a Ordem (WO) para analisar a Timeline:", df_wo_timeline['wo'].tolist(), key="wo_timeline_sel")
+            
+            if wo_selecionada:
+                # 1. DADOS DAS FASES (Barras do Gráfico)
+                df_fases_tl = pd.read_sql_query(
+                    "SELECT fase, responsavel, categoria, data_inicio, data_fim FROM kanban_fases WHERE wo = %s ORDER BY data_inicio", 
+                    engine, params=(wo_selecionada,)
+                )
+                
+                # Se a fase ainda não acabou, usamos o tempo atual para fechar a barra até o momento de "agora"
+                df_fases_tl['data_fim_plot'] = df_fases_tl['data_fim'].fillna(pd.Timestamp.now())
+                
+                # 2. DADOS DE MATERIAL (Marcos Logísticos)
+                df_mats_tl = pd.read_sql_query(
+                    "SELECT codigo, data_recebimento FROM kanban_materiais WHERE wo = %s AND status = 'Recebido'", 
+                    engine, params=(wo_selecionada,)
+                )
+                
+                if not df_fases_tl.empty:
+                    # Configuração de cores por Categoria (Engenharia vs Fábrica)
+                    cores_map = {"Engenharia": "#004a99", "Fábrica": "#28a745"}
+                    
+                    # Cria o Gráfico de Gantt da WO
+                    fig_tl = px.timeline(
+                        df_fases_tl, 
+                        x_start="data_inicio", 
+                        x_end="data_fim_plot", 
+                        y="fase", 
+                        color="categoria",
+                        hover_name="responsavel",
+                        color_discrete_map=cores_map,
+                        title=f"Evolução Histórica da WO: {wo_selecionada}"
+                    )
+                    
+                    # Inverte o eixo Y para a primeira fase ficar no topo
+                    fig_tl.update_yaxes(autorange="reversed")
+                    fig_tl.update_layout(height=400, margin=dict(t=40, b=20))
+                    
+                    # INSERINDO OS MARCOS DE MATERIAL NA LINHA DO TEMPO
+                    if not df_mats_tl.empty:
+                        for _, mat in df_mats_tl.iterrows():
+                            if pd.notna(mat['data_recebimento']):
+                                data_mat = pd.to_datetime(mat['data_recebimento'])
+                                fig_tl.add_vline(
+                                    x=data_mat.timestamp() * 1000, # Plotly requer conversão timestamp em milissegundos
+                                    line_width=2, 
+                                    line_dash="dash", 
+                                    line_color="#dc3545",
+                                    annotation_text=f"📦 Rec: {mat['codigo']}", 
+                                    annotation_position="top left",
+                                    annotation_font=dict(color="#dc3545", size=10)
+                                )
+                    
+                    st.plotly_chart(fig_tl, use_container_width=True)
+                    
+                    # Tabela de log exato
+                    with st.expander("Ver Log Exato de Transições"):
+                        df_fases_tl['data_inicio'] = pd.to_datetime(df_fases_tl['data_inicio']).dt.strftime('%d/%m/%Y %H:%M')
+                        df_fases_tl['data_fim'] = pd.to_datetime(df_fases_tl['data_fim']).dt.strftime('%d/%m/%Y %H:%M').replace("NaT", "Em Andamento")
+                        st.dataframe(df_fases_tl[['fase', 'responsavel', 'data_inicio', 'data_fim']], use_container_width=True)
+                else:
+                    st.info("A WO selecionada tem registro, mas as datas falharam ao carregar.")
+        else:
+            st.info("Nenhuma WO foi movimentada no Kanban ainda.")
 
 # ------------------------------------------
 # ABA: MANUTENÇÃO E IMPORTAÇÃO
