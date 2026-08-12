@@ -2462,10 +2462,93 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                 st.info("🎉 Nenhum material faltante no momento. Tudo liberado!")
 
     # ==========================================
-    # ESQUELETO DO KANBAN E TIMELINE (Para a Fase 3 e 4)
+    # ESQUELETO DO KANBAN E TIMELINE (Fase 3)
     # ==========================================
     with tab_kanban:
-        st.info("O Quadro Kanban visual entrará aqui na próxima fase da nossa implementação.")
+        st.markdown("### 📋 Gestão Visual de Fluxo (Kanban)")
+        
+        # Agrupando as fases exatas que você definiu
+        fases_eng = ["Desenhos do barramento", "Projeto Elétrico", "Lista de Fiação", "Projeto Mecânico", "Separação de Material", "Solicitação de embalagem"]
+        fases_fab = ["Produção do Barramento", "Impressão de identificadores", "Montagem Mecânica", "Montagem Elétrica", "Testes", "Embalagem"]
+        todas_fases = ["- Selecione -"] + fases_eng + fases_fab
+        
+        # 1. PAINEL DE MOVIMENTAÇÃO (O "Motor" do Kanban)
+        with st.expander("🚀 Iniciar WO no Kanban ou Movimentar Cartão", expanded=False):
+            col_k1, col_k2, col_k3 = st.columns(3)
+            
+            wo_k_sel = col_k1.selectbox("Selecione a WO:", df_wos_ativas['wo'].tolist() if not df_wos_ativas.empty else ["Nenhuma WO ativa"], key="wo_start_k")
+            
+            nova_fase_k = col_k2.selectbox("Mover para a Fase:", todas_fases, key="fase_start_k")
+            
+            # Carrega os projetistas da tabela
+            df_proj = pd.read_sql_query("SELECT nome, especialidade FROM projetistas", engine)
+            lista_responsaveis = ["Equipe de Fábrica"] + [f"{r['nome']} ({r['especialidade']})" for _, r in df_proj.iterrows()]
+            responsavel_k = col_k3.selectbox("Responsável:", lista_responsaveis, key="resp_start_k")
+            
+            if st.button("✅ Confirmar Movimentação", type="primary", use_container_width=True):
+                if nova_fase_k != "- Selecione -":
+                    # Passo 1: Fechar a fase atual (Se existir alguma) - Isso garante o histórico de "idas e vindas"
+                    cursor.execute("UPDATE kanban_fases SET data_fim = NOW(), status = 'Concluído' WHERE wo = %s AND data_fim IS NULL", (wo_k_sel,))
+                    
+                    # Passo 2: Iniciar a nova fase
+                    categoria = "Engenharia" if nova_fase_k in fases_eng else "Fábrica"
+                    resp_clean = responsavel_k.split(" (")[0] if responsavel_k != "Equipe de Fábrica" else "Equipe Fábrica"
+                    
+                    cursor.execute("""
+                        INSERT INTO kanban_fases (wo, categoria, fase, responsavel, data_inicio, status)
+                        VALUES (%s, %s, %s, %s, NOW(), 'Em Andamento')
+                    """, (wo_k_sel, categoria, nova_fase_k, resp_clean))
+                    conn.commit()
+                    
+                    st.success(f"✔️ WO {wo_k_sel} movida para a fase: {nova_fase_k}!")
+                    time_sys.sleep(1.5)
+                    st.rerun()
+                else:
+                    st.error("Selecione uma fase de destino válida.")
+
+        st.markdown("---")
+        
+        # 2. VISUALIZAÇÃO DO QUADRO KANBAN
+        # Buscar apenas as WOs que estão ativas (data_fim é nula)
+        df_kanban_atual = pd.read_sql_query("""
+            SELECT k.wo, k.fase, k.responsavel, k.categoria, k.data_inicio, p.product_name 
+            FROM kanban_fases k
+            JOIN projetos p ON k.wo = p.wo
+            WHERE k.data_fim IS NULL
+        """, engine)
+
+        tipo_visao = st.radio("Filtrar Quadro por Setor:", ["Engenharia, Projetos & Logística", "Chão de Fábrica (Montagem e Testes)"], horizontal=True)
+        
+        st.write("") # Espaçamento
+        
+        if tipo_visao == "Engenharia, Projetos & Logística":
+            cols_eng = st.columns(len(fases_eng))
+            for i, fase_nome in enumerate(fases_eng):
+                with cols_eng[i]:
+                    st.markdown(f"<div style='text-align: center; background-color: #004a99; color: white; padding: 5px; border-radius: 5px; margin-bottom: 10px; font-weight: bold; font-size: 14px;'>{fase_nome}</div>", unsafe_allow_html=True)
+                    
+                    df_fase = df_kanban_atual[df_kanban_atual['fase'] == fase_nome]
+                    for _, row in df_fase.iterrows():
+                        with st.container(border=True):
+                            st.markdown(f"<h5 style='margin-bottom:0px; color:#004a99;'>{row['wo']}</h5>", unsafe_allow_html=True)
+                            st.caption(f"{row['product_name']}")
+                            st.write(f"👤 **Resp:** {row['responsavel']}")
+                            d_ini = pd.to_datetime(row['data_inicio']).strftime('%d/%m %H:%M')
+                            st.caption(f"⏳ Desde: {d_ini}")
+                            
+        else:
+            cols_fab = st.columns(len(fases_fab))
+            for i, fase_nome in enumerate(fases_fab):
+                with cols_fab[i]:
+                    st.markdown(f"<div style='text-align: center; background-color: #28a745; color: white; padding: 5px; border-radius: 5px; margin-bottom: 10px; font-weight: bold; font-size: 14px;'>{fase_nome}</div>", unsafe_allow_html=True)
+                    
+                    df_fase = df_kanban_atual[df_kanban_atual['fase'] == fase_nome]
+                    for _, row in df_fase.iterrows():
+                        with st.container(border=True):
+                            st.markdown(f"<h5 style='margin-bottom:0px; color:#28a745;'>{row['wo']}</h5>", unsafe_allow_html=True)
+                            st.caption(f"{row['product_name']}")
+                            d_ini = pd.to_datetime(row['data_inicio']).strftime('%d/%m %H:%M')
+                            st.caption(f"⏳ Desde: {d_ini}")
         
     # ==========================================
     # TIMELINE E MARCOS DO PROJETO (Fase 4)
