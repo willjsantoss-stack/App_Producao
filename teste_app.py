@@ -2405,15 +2405,27 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
         st.markdown("### ⚠️ Controle de Materiais Faltantes e Recebimentos")
         st.write("Registre os materiais que travam a produção. A data de recebimento formará um marco na linha do tempo do projeto.")
         
+        # --- NOVO: Criando uma lista amigável com SO, WO e Produto ---
+        opcoes_projetos = []
+        if not df_wos_ativas.empty:
+            for _, r in df_wos_ativas.iterrows():
+                # Formato: "SO: 1234 | WO: 5678 - Nome do Painel"
+                opcoes_projetos.append(f"SO: {r['so']} | WO: {r['wo']} - {r['product_name']}")
+        else:
+            opcoes_projetos = ["- Nenhum projeto ativo -"]
+        # -------------------------------------------------------------
+
         col_mat_esq, col_mat_dir = st.columns([1, 2])
         
         with col_mat_esq:
             with st.container(border=True):
                 st.markdown("#### ➕ Apontar Nova Falta")
                 
-                # Formulário para apontar material faltante (Regra D)
+                # Formulário para apontar material faltante
                 with st.form("form_novo_material", clear_on_submit=True):
-                    wo_mat = st.selectbox("Work Order (WO)*", df_wos_ativas['wo'].tolist() if not df_wos_ativas.empty else ["Nenhuma WO ativa"])
+                    # --- ATUALIZADO: Usando a lista amigável ---
+                    projeto_selecionado = st.selectbox("Projeto (SO) / Produto*", opcoes_projetos)
+                    
                     cod_mat = st.text_input("Código do Material*")
                     desc_mat = st.text_area("Descrição do Material*")
                     qtd_mat = st.number_input("Quantidade*", min_value=1, step=1)
@@ -2423,14 +2435,17 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                     submit_mat = st.form_submit_button("💾 Registrar Falta", type="primary", use_container_width=True)
                     
                     if submit_mat:
-                        if not cod_mat or not desc_mat or qtd_mat <= 0:
-                            st.error("❌ Código, Descrição e Quantidade são obrigatórios!")
+                        if not cod_mat or not desc_mat or qtd_mat <= 0 or projeto_selecionado == "- Nenhum projeto ativo -":
+                            st.error("❌ Projeto, Código, Descrição e Quantidade são obrigatórios!")
                         else:
+                            # --- NOVO: Extraindo apenas o número da WO para salvar no banco ---
+                            wo_extraida = projeto_selecionado.split("WO: ")[1].split(" -")[0]
+                            
                             dt_prev_str = dt_prev.strftime('%Y-%m-%d') if dt_prev else None
                             cursor.execute("""
                                 INSERT INTO kanban_materiais (wo, codigo, descricao, quantidade, data_apontamento, data_prevista_chegada, status)
                                 VALUES (%s, %s, %s, %s, NOW(), %s, 'Faltante')
-                            """, (wo_mat, cod_mat.strip(), desc_mat.strip(), qtd_mat, dt_prev_str))
+                            """, (wo_extraida, cod_mat.strip(), desc_mat.strip(), qtd_mat, dt_prev_str))
                             conn.commit()
                             st.success("✔️ Material registrado como faltante!")
                             time_sys.sleep(1)
@@ -2451,7 +2466,7 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                         prev = pd.to_datetime(row['data_prevista_chegada']).strftime('%d/%m/%Y') if pd.notna(row['data_prevista_chegada']) else "Não informada"
                         c_info.caption(f"📅 *Previsão de Chegada: {prev}*")
                         
-                        # Botão que marca como recebido e grava a data do marco
+                        # O FAMOSO BOTÃO DE BAIXA:
                         if c_btn.button("📦 Dar Baixa (Recebido)", key=f"rec_mat_{row['id']}", use_container_width=True):
                             cursor.execute("UPDATE kanban_materiais SET status = 'Recebido', data_recebimento = CURRENT_DATE WHERE id = %s", (row['id'],))
                             conn.commit()
