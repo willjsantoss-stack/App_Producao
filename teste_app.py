@@ -89,7 +89,7 @@ def init_db():
     if cursor.fetchone()[0] == 0:
         equipe = [
             ('Juliana', 'Elétrica'), ('Peterson', 'Elétrica'), ('Giliard', 'Elétrica'), ('Marilia', 'Elétrica'),
-            ('Rafael', 'Mecânica'), ('Arnaldo', 'Mecânica'), ('Daniel', 'Mecânica')
+            ('Rafael', 'Mecânica'), ('Arnaldo', 'Mecânica'), ('Daniel', 'Mecânica'), ('Almoxarifado', 'Logistica')
         ]
         for p in equipe:
             cursor.execute("INSERT INTO projetistas (nome, especialidade) VALUES (%s, %s)", p)
