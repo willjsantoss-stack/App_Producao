@@ -2386,6 +2386,89 @@ elif menu_selecionado == "📅 Planejamento de Carga":
         else:
             st.info("Nenhum planejamento registrado para a escala selecionada.")
 
+# ------------------------------------------
+# ABA: KANBAN E TIMELINE
+# ------------------------------------------
+elif menu_selecionado == "🗂️ Kanban & Timeline":
+    st.markdown("## 🗂️ Kanban, Materiais e Timeline")
+    
+    # Carrega as WOs ativas para o usuário poder selecionar
+    df_wos_ativas = pd.read_sql_query("SELECT wo, so, product_name FROM projetos WHERE UPPER(TRIM(status_producao)) != 'FINALIZADO' OR status_producao IS NULL", engine)
+    
+    # Cria as três sub-abas principais do setor
+    tab_kanban, tab_materiais, tab_timeline = st.tabs(["📋 Quadro Kanban (Eng/Fábrica)", "📦 Gestão de Materiais", "📈 Linha do Tempo (Timeline)"])
+    
+    # ==========================================
+    # GESTÃO DE MATERIAIS (Fase 2)
+    # ==========================================
+    with tab_materiais:
+        st.markdown("### ⚠️ Controle de Materiais Faltantes e Recebimentos")
+        st.write("Registre os materiais que travam a produção. A data de recebimento formará um marco na linha do tempo do projeto.")
+        
+        col_mat_esq, col_mat_dir = st.columns([1, 2])
+        
+        with col_mat_esq:
+            with st.container(border=True):
+                st.markdown("#### ➕ Apontar Nova Falta")
+                
+                # Formulário para apontar material faltante (Regra D)
+                with st.form("form_novo_material", clear_on_submit=True):
+                    wo_mat = st.selectbox("Work Order (WO)*", df_wos_ativas['wo'].tolist() if not df_wos_ativas.empty else ["Nenhuma WO ativa"])
+                    cod_mat = st.text_input("Código do Material*")
+                    desc_mat = st.text_area("Descrição do Material*")
+                    qtd_mat = st.number_input("Quantidade*", min_value=1, step=1)
+                    
+                    dt_prev = st.date_input("Data Prevista de Chegada (Opcional)", value=None)
+                    
+                    submit_mat = st.form_submit_button("💾 Registrar Falta", type="primary", use_container_width=True)
+                    
+                    if submit_mat:
+                        if not cod_mat or not desc_mat or qtd_mat <= 0:
+                            st.error("❌ Código, Descrição e Quantidade são obrigatórios!")
+                        else:
+                            dt_prev_str = dt_prev.strftime('%Y-%m-%d') if dt_prev else None
+                            cursor.execute("""
+                                INSERT INTO kanban_materiais (wo, codigo, descricao, quantidade, data_apontamento, data_prevista_chegada, status)
+                                VALUES (%s, %s, %s, %s, NOW(), %s, 'Faltante')
+                            """, (wo_mat, cod_mat.strip(), desc_mat.strip(), qtd_mat, dt_prev_str))
+                            conn.commit()
+                            st.success("✔️ Material registrado como faltante!")
+                            time_sys.sleep(1)
+                            st.rerun()
+
+        with col_mat_dir:
+            st.markdown("#### ⏳ Materiais Aguardando Recebimento")
+            # Busca os materiais que ainda estão com status 'Faltante'
+            df_mats = pd.read_sql_query("SELECT id, wo, codigo, descricao, quantidade, data_prevista_chegada FROM kanban_materiais WHERE status = 'Faltante'", engine)
+            
+            if not df_mats.empty:
+                for _, row in df_mats.iterrows():
+                    with st.container(border=True):
+                        c_info, c_btn = st.columns([3, 1])
+                        c_info.write(f"**WO:** {row['wo']} | **Cód:** {row['codigo']}")
+                        c_info.write(f"**Desc:** {row['descricao']} | **Qtd:** {row['quantidade']} un")
+                        
+                        prev = pd.to_datetime(row['data_prevista_chegada']).strftime('%d/%m/%Y') if pd.notna(row['data_prevista_chegada']) else "Não informada"
+                        c_info.caption(f"📅 *Previsão de Chegada: {prev}*")
+                        
+                        # Botão que marca como recebido e grava a data do marco
+                        if c_btn.button("📦 Dar Baixa (Recebido)", key=f"rec_mat_{row['id']}", use_container_width=True):
+                            cursor.execute("UPDATE kanban_materiais SET status = 'Recebido', data_recebimento = CURRENT_DATE WHERE id = %s", (row['id'],))
+                            conn.commit()
+                            st.success("✔️ Recebimento confirmado! Marco gerado para a Timeline.")
+                            time_sys.sleep(1)
+                            st.rerun()
+            else:
+                st.info("🎉 Nenhum material faltante no momento. Tudo liberado!")
+
+    # ==========================================
+    # ESQUELETO DO KANBAN E TIMELINE (Para a Fase 3 e 4)
+    # ==========================================
+    with tab_kanban:
+        st.info("O Quadro Kanban visual entrará aqui na próxima fase da nossa implementação.")
+        
+    with tab_timeline:
+        st.info("O Gráfico de Timeline com os marcos de materiais entrará aqui na última fase.")
 
 # ------------------------------------------
 # ABA: MANUTENÇÃO E IMPORTAÇÃO
