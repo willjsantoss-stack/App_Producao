@@ -95,19 +95,30 @@ def init_db():
             cursor.execute("INSERT INTO projetistas (nome, especialidade) VALUES (%s, %s)", p)
 
     # 2. TABELA DE FASES DO KANBAN E MARCOS
-    # Servirá tanto para a Engenharia quanto para a Fábrica
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS kanban_fases (
             id SERIAL PRIMARY KEY,
-            wo TEXT,
-            categoria TEXT, -- "Engenharia" ou "Fábrica"
-            fase TEXT, -- Ex: "Projeto Elétrico", "Montagem Mecânica"
-            responsavel TEXT, -- Nome do projetista ou setor
+            so TEXT,             -- NOVO: Para agrupar a Engenharia
+            wo TEXT,             -- Para agrupar a Fábrica
+            categoria TEXT, 
+            fase TEXT, 
+            responsavel TEXT, 
             data_inicio TIMESTAMP,
+            data_prevista DATE,  -- NOVO: Meta de entrega da Engenharia
             data_fim TIMESTAMP,
-            status TEXT -- "Em Andamento", "Concluído"
+            status TEXT 
         )
     ''')
+
+    # Script de Migração Automática (Adiciona as colunas novas sem apagar seus dados)
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'kanban_fases'")
+    col_k = [c[0] for c in cursor.fetchall()]
+    if 'data_prevista' not in col_k:
+        try: cursor.execute("ALTER TABLE kanban_fases ADD COLUMN data_prevista DATE")
+        except: pass
+    if 'so' not in col_k:
+        try: cursor.execute("ALTER TABLE kanban_fases ADD COLUMN so TEXT")
+        except: pass
 
     # 3. TABELA DE GESTÃO DE MATERIAIS FALTANTES (Com campos obrigatórios)
     cursor.execute('''
@@ -2471,50 +2482,78 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                 st.info("🎉 Nenhum material faltante no momento. Tudo liberado!")
 
     # ==========================================
-    # KANBAN VISUAL (Fase 3)
+    # KANBAN VISUAL E MARCOS (Fase 3 - Evoluída)
     # ==========================================
     with tab_kanban:
-        st.markdown("### 📋 Gestão Visual de Fluxo (Kanban)")
+        st.markdown("### 📋 Gestão Visual de Fluxo e Marcos")
         
         fases_eng = ["Desenhos do barramento", "Projeto Elétrico", "Lista de Fiação", "Projeto Mecânico", "Separação de Material", "Solicitação de embalagem"]
         fases_fab = ["Produção do Barramento", "Impressão de identificadores", "Montagem Mecânica", "Montagem Elétrica", "Testes", "Embalagem"]
-        todas_fases = ["- Selecione -"] + fases_eng + fases_fab
         
-        with st.expander("🚀 Iniciar WO no Kanban ou Movimentar Cartão", expanded=False):
-            col_k1, col_k2, col_k3 = st.columns(3)
+        df_proj = pd.read_sql_query("SELECT nome, especialidade FROM projetistas", engine)
+        lista_responsaveis = ["Equipe de Fábrica"] + [f"{r['nome']} ({r['especialidade']})" for _, r in df_proj.iterrows()]
+
+        # 1. PAINEL DE MOVIMENTAÇÃO E PLANEJAMENTO SEPARADOS
+        with st.expander("🚀 Planejar Marcos (Engenharia) ou Movimentar Cartão (Fábrica)", expanded=False):
+            tab_start_eng, tab_start_fab = st.tabs(["⚙️ Marcos de Engenharia & Logística (Por Projeto/SO)", "🏭 Fluxo de Fábrica (Por WO)"])
             
-            wo_k_sel = col_k1.selectbox("Selecione a WO:", df_wos_ativas['wo'].tolist() if not df_wos_ativas.empty else ["Nenhuma WO ativa"], key="wo_start_k")
-            nova_fase_k = col_k2.selectbox("Mover para a Fase:", todas_fases, key="fase_start_k")
-            
-            df_proj = pd.read_sql_query("SELECT nome, especialidade FROM projetistas", engine)
-            lista_responsaveis = ["Equipe de Fábrica"] + [f"{r['nome']} ({r['especialidade']})" for _, r in df_proj.iterrows()]
-            responsavel_k = col_k3.selectbox("Responsável:", lista_responsaveis, key="resp_start_k")
-            
-            if st.button("✅ Confirmar Movimentação", type="primary", use_container_width=True):
-                if nova_fase_k != "- Selecione -":
-                    cursor.execute("UPDATE kanban_fases SET data_fim = NOW(), status = 'Concluído' WHERE wo = %s AND data_fim IS NULL", (wo_k_sel,))
-                    categoria = "Engenharia" if nova_fase_k in fases_eng else "Fábrica"
-                    resp_clean = responsavel_k.split(" (")[0] if responsavel_k != "Equipe de Fábrica" else "Equipe Fábrica"
-                    
-                    cursor.execute("""
-                        INSERT INTO kanban_fases (wo, categoria, fase, responsavel, data_inicio, status)
-                        VALUES (%s, %s, %s, %s, NOW(), 'Em Andamento')
-                    """, (wo_k_sel, categoria, nova_fase_k, resp_clean))
-                    conn.commit()
-                    
-                    st.success(f"✔️ WO {wo_k_sel} movida para a fase: {nova_fase_k}!")
-                    time_sys.sleep(1.5)
-                    st.rerun()
-                else:
-                    st.error("Selecione uma fase de destino válida.")
+            # --- PAINEL DA ENGENHARIA (Criação de Marcos com Prazo) ---
+            with tab_start_eng:
+                ce1, ce2, ce3, ce4 = st.columns(4)
+                so_k_sel = ce1.selectbox("Projeto (SO) / Cliente:", opcoes_projetos, key="so_start_k")
+                fase_eng_sel = ce2.selectbox("Fase / Marco:", ["- Selecione -"] + fases_eng, key="fase_eng_start_k")
+                resp_eng_sel = ce3.selectbox("Responsável:", lista_responsaveis, key="resp_eng_start_k")
+                data_prev_eng = ce4.date_input("Previsão de Entrega:", date.today() + timedelta(days=5), format="DD/MM/YYYY", key="prev_eng_start_k")
+
+                if st.button("✅ Iniciar Marco de Engenharia", type="primary", use_container_width=True):
+                    if fase_eng_sel != "- Selecione -" and so_k_sel != "- Nenhum projeto ativo -":
+                        so_limpa = so_k_sel.split(" - ")[0].strip()
+                        resp_limpo = resp_eng_sel.split(" (")[0] if resp_eng_sel != "Equipe de Fábrica" else "Equipe Fábrica"
+                        
+                        cursor.execute("""
+                            INSERT INTO kanban_fases (so, categoria, fase, responsavel, data_inicio, data_prevista, status)
+                            VALUES (%s, 'Engenharia', %s, %s, NOW(), %s, 'Em Andamento')
+                        """, (so_limpa, fase_eng_sel, resp_limpo, data_prev_eng.strftime('%Y-%m-%d')))
+                        conn.commit()
+                        st.success(f"✔️ Marco de {fase_eng_sel} iniciado para a SO {so_limpa}!")
+                        time_sys.sleep(1.5); st.rerun()
+                    else:
+                        st.error("Selecione o Projeto e a Fase.")
+
+            # --- PAINEL DA FÁBRICA (Movimentação Linear de WO) ---
+            with tab_start_fab:
+                cf1, cf2, cf3 = st.columns(3)
+                wo_k_sel = cf1.selectbox("Selecione a WO:", df_wos_ativas['wo'].tolist() if not df_wos_ativas.empty else ["Nenhuma WO ativa"], key="wo_start_k")
+                nova_fase_fab = cf2.selectbox("Mover para a Fase:", ["- Selecione -"] + fases_fab, key="fase_fab_start_k")
+                resp_fab_sel = cf3.selectbox("Responsável:", lista_responsaveis, index=0, key="resp_fab_start_k")
+                
+                if st.button("🔄 Mover Cartão da WO", type="primary", use_container_width=True):
+                    if nova_fase_fab != "- Selecione -":
+                        cursor.execute("UPDATE kanban_fases SET data_fim = NOW(), status = 'Concluído' WHERE wo = %s AND data_fim IS NULL", (wo_k_sel,))
+                        resp_limpo = resp_fab_sel.split(" (")[0] if resp_fab_sel != "Equipe de Fábrica" else "Equipe Fábrica"
+                        
+                        cursor.execute("""
+                            INSERT INTO kanban_fases (wo, categoria, fase, responsavel, data_inicio, status)
+                            VALUES (%s, 'Fábrica', %s, %s, NOW(), 'Em Andamento')
+                        """, (wo_k_sel, nova_fase_fab, resp_limpo))
+                        conn.commit()
+                        st.success(f"✔️ WO {wo_k_sel} movida para {nova_fase_fab}!")
+                        time_sys.sleep(1.5); st.rerun()
+                    else:
+                        st.error("Selecione a fase de destino.")
 
         st.markdown("---")
         
+        # 2. VISUALIZAÇÃO DO QUADRO KANBAN
+        # Query avançada para trazer nome do cliente para SOs e nome do produto para WOs
         df_kanban_atual = pd.read_sql_query("""
-            SELECT k.wo, k.fase, k.responsavel, k.categoria, k.data_inicio, p.product_name 
+            SELECT k.id, k.so, k.wo, k.fase, k.responsavel, k.categoria, k.data_inicio, k.data_prevista, k.status,
+                   p_so.customer as so_customer,
+                   p_wo.product_name as wo_product
             FROM kanban_fases k
-            JOIN projetos p ON k.wo = p.wo
-            WHERE k.data_fim IS NULL
+            LEFT JOIN (SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL) p_so ON k.so = p_so.so
+            LEFT JOIN (SELECT DISTINCT wo, product_name FROM projetos WHERE wo IS NOT NULL) p_wo ON k.wo = p_wo.wo
+            WHERE k.data_fim IS NULL AND k.status = 'Em Andamento'
         """, engine)
 
         tipo_visao = st.radio("Filtrar Quadro por Setor:", ["Engenharia, Projetos & Logística", "Chão de Fábrica (Montagem e Testes)"], horizontal=True)
@@ -2529,11 +2568,19 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                     df_fase = df_kanban_atual[df_kanban_atual['fase'] == fase_nome]
                     for _, row in df_fase.iterrows():
                         with st.container(border=True):
-                            st.markdown(f"<h5 style='margin-bottom:0px; color:#004a99;'>{row['wo']}</h5>", unsafe_allow_html=True)
-                            st.caption(f"{row['product_name']}")
+                            st.markdown(f"<h5 style='margin-bottom:0px; color:#004a99;'>SO: {row['so']}</h5>", unsafe_allow_html=True)
+                            cliente_nome = row['so_customer'] if pd.notna(row['so_customer']) else "Desconhecido"
+                            st.caption(f"{cliente_nome}")
                             st.write(f"👤 **Resp:** {row['responsavel']}")
-                            d_ini = pd.to_datetime(row['data_inicio']).strftime('%d/%m %H:%M')
-                            st.caption(f"⏳ Desde: {d_ini}")
+                            d_prev = pd.to_datetime(row['data_prevista']).strftime('%d/%m/%Y') if pd.notna(row['data_prevista']) else "Não definida"
+                            st.write(f"🎯 **Previsão:** {d_prev}")
+                            
+                            # Botão para finalizar o marco diretamente no cartão!
+                            if st.button("🏁 Finalizar Entrega", key=f"fin_eng_{row['id']}", use_container_width=True):
+                                cursor.execute("UPDATE kanban_fases SET data_fim = NOW(), status = 'Concluído' WHERE id = %s", (row['id'],))
+                                conn.commit()
+                                st.success("Marco concluído e enviado para a Timeline!")
+                                time_sys.sleep(1); st.rerun()
                             
         else:
             cols_fab = st.columns(len(fases_fab))
@@ -2544,10 +2591,10 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                     df_fase = df_kanban_atual[df_kanban_atual['fase'] == fase_nome]
                     for _, row in df_fase.iterrows():
                         with st.container(border=True):
-                            st.markdown(f"<h5 style='margin-bottom:0px; color:#28a745;'>{row['wo']}</h5>", unsafe_allow_html=True)
-                            st.caption(f"{row['product_name']}")
+                            st.markdown(f"<h5 style='margin-bottom:0px; color:#28a745;'>WO: {row['wo']}</h5>", unsafe_allow_html=True)
+                            st.caption(f"{row['wo_product']}")
                             d_ini = pd.to_datetime(row['data_inicio']).strftime('%d/%m %H:%M')
-                            st.caption(f"⏳ Desde: {d_ini}")
+                            st.caption(f"⏳ Em execução desde: {d_ini}")
         
     # ==========================================
     # TIMELINE E MARCOS DO PROJETO (Fase 4)
