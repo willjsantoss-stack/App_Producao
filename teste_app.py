@@ -2386,34 +2386,23 @@ elif menu_selecionado == "📅 Planejamento de Carga":
         else:
             st.info("Nenhum planejamento registrado para a escala selecionada.")
 
-# ------------------------------------------
-# ABA: KANBAN E TIMELINE
-# ------------------------------------------
-elif menu_selecionado == "🗂️ Kanban & Timeline":
-    st.markdown("## 🗂️ Kanban, Materiais e Timeline")
-    
-    # Carrega as WOs ativas para o usuário poder selecionar
-    df_wos_ativas = pd.read_sql_query("SELECT wo, so, product_name FROM projetos WHERE UPPER(TRIM(status_producao)) != 'FINALIZADO' OR status_producao IS NULL", engine)
-    
-    # Cria as três sub-abas principais do setor
-    tab_kanban, tab_materiais, tab_timeline = st.tabs(["📋 Quadro Kanban (Eng/Fábrica)", "📦 Gestão de Materiais", "📈 Linha do Tempo (Timeline)"])
-    
-    # ==========================================
+# ==========================================
     # GESTÃO DE MATERIAIS (Fase 2)
     # ==========================================
     with tab_materiais:
         st.markdown("### ⚠️ Controle de Materiais Faltantes e Recebimentos")
         st.write("Registre os materiais que travam a produção. A data de recebimento formará um marco na linha do tempo do projeto.")
         
-        # --- NOVO: Criando uma lista amigável com SO, WO e Produto ---
+        # --- NOVO: Buscando apenas SOs Únicas e o nome do Cliente ---
+        df_sos_ativas = pd.read_sql_query("SELECT DISTINCT so, customer FROM projetos WHERE UPPER(TRIM(status_producao)) != 'FINALIZADO' OR status_producao IS NULL", engine)
+        
         opcoes_projetos = []
-        if not df_wos_ativas.empty:
-            for _, r in df_wos_ativas.iterrows():
-                # Formato: "SO: 1234 | WO: 5678 - Nome do Painel"
-                opcoes_projetos.append(f"SO: {r['so']} | WO: {r['wo']} - {r['product_name']}")
+        if not df_sos_ativas.empty:
+            for _, r in df_sos_ativas.iterrows():
+                cliente = r['customer'] if pd.notna(r['customer']) else "Cliente Não Informado"
+                opcoes_projetos.append(f"{r['so']} - {cliente}")
         else:
             opcoes_projetos = ["- Nenhum projeto ativo -"]
-        # -------------------------------------------------------------
 
         col_mat_esq, col_mat_dir = st.columns([1, 2])
         
@@ -2421,15 +2410,13 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
             with st.container(border=True):
                 st.markdown("#### ➕ Apontar Nova Falta")
                 
-                # Formulário para apontar material faltante
                 with st.form("form_novo_material", clear_on_submit=True):
-                    # --- ATUALIZADO: Usando a lista amigável ---
-                    projeto_selecionado = st.selectbox("Projeto (SO) / Produto*", opcoes_projetos)
+                    # Seletor atualizado para exibir apenas SO e Cliente
+                    projeto_selecionado = st.selectbox("Sales Order (SO) / Cliente*", opcoes_projetos)
                     
                     cod_mat = st.text_input("Código do Material*")
                     desc_mat = st.text_area("Descrição do Material*")
                     qtd_mat = st.number_input("Quantidade*", min_value=1, step=1)
-                    
                     dt_prev = st.date_input("Data Prevista de Chegada (Opcional)", value=None)
                     
                     submit_mat = st.form_submit_button("💾 Registrar Falta", type="primary", use_container_width=True)
@@ -2438,40 +2425,40 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                         if not cod_mat or not desc_mat or qtd_mat <= 0 or projeto_selecionado == "- Nenhum projeto ativo -":
                             st.error("❌ Projeto, Código, Descrição e Quantidade são obrigatórios!")
                         else:
-                            # --- NOVO: Extraindo apenas o número da WO para salvar no banco ---
-                            wo_extraida = projeto_selecionado.split("WO: ")[1].split(" -")[0]
-                            
+                            # Extrai apenas o número da SO (Tudo antes do traço)
+                            so_extraida = projeto_selecionado.split(" - ")[0].strip()
                             dt_prev_str = dt_prev.strftime('%Y-%m-%d') if dt_prev else None
+                            
+                            # Salvamos a SO na coluna 'wo' do banco para manter a arquitetura original intacta
                             cursor.execute("""
                                 INSERT INTO kanban_materiais (wo, codigo, descricao, quantidade, data_apontamento, data_prevista_chegada, status)
                                 VALUES (%s, %s, %s, %s, NOW(), %s, 'Faltante')
-                            """, (wo_extraida, cod_mat.strip(), desc_mat.strip(), qtd_mat, dt_prev_str))
+                            """, (so_extraida, cod_mat.strip(), desc_mat.strip(), qtd_mat, dt_prev_str))
                             conn.commit()
-                            st.success("✔️ Material registrado como faltante!")
-                            time_sys.sleep(1)
+                            st.success("✔️ Material registrado como faltante na SO!")
+                            time_sys.sleep(1.5)
                             st.rerun()
 
         with col_mat_dir:
             st.markdown("#### ⏳ Materiais Aguardando Recebimento")
-            # Busca os materiais que ainda estão com status 'Faltante'
-            df_mats = pd.read_sql_query("SELECT id, wo, codigo, descricao, quantidade, data_prevista_chegada FROM kanban_materiais WHERE status = 'Faltante'", engine)
+            df_mats = pd.read_sql_query("SELECT id, wo as so_vinculada, codigo, descricao, quantidade, data_prevista_chegada FROM kanban_materiais WHERE status = 'Faltante'", engine)
             
             if not df_mats.empty:
                 for _, row in df_mats.iterrows():
                     with st.container(border=True):
                         c_info, c_btn = st.columns([3, 1])
-                        c_info.write(f"**WO:** {row['wo']} | **Cód:** {row['codigo']}")
+                        # Exibição ajustada para mostrar a SO vinculada
+                        c_info.write(f"**SO:** {row['so_vinculada']} | **Cód:** {row['codigo']}")
                         c_info.write(f"**Desc:** {row['descricao']} | **Qtd:** {row['quantidade']} un")
                         
                         prev = pd.to_datetime(row['data_prevista_chegada']).strftime('%d/%m/%Y') if pd.notna(row['data_prevista_chegada']) else "Não informada"
                         c_info.caption(f"📅 *Previsão de Chegada: {prev}*")
                         
-                        # O FAMOSO BOTÃO DE BAIXA:
                         if c_btn.button("📦 Dar Baixa (Recebido)", key=f"rec_mat_{row['id']}", use_container_width=True):
                             cursor.execute("UPDATE kanban_materiais SET status = 'Recebido', data_recebimento = CURRENT_DATE WHERE id = %s", (row['id'],))
                             conn.commit()
                             st.success("✔️ Recebimento confirmado! Marco gerado para a Timeline.")
-                            time_sys.sleep(1)
+                            time_sys.sleep(1.5)
                             st.rerun()
             else:
                 st.info("🎉 Nenhum material faltante no momento. Tudo liberado!")
