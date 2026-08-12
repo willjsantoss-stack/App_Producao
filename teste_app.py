@@ -516,6 +516,7 @@ menu_selecionado = st.radio(
         "👥 Dash. RH",
         "📋 Ordens de Produção",
         "📅 Planejamento de Carga",
+        "🗂️ Kanban & Timeline", # ADICIONE ESTA LINHA AQUI
         "🔍 Manutenção", 
         "📑 Relatórios PDF"
     ],
