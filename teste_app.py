@@ -2731,11 +2731,11 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                                     conn.commit(); st.rerun()
 
     # ==========================================
-    # TIMELINE E MARCOS DO PROJETO (Estilo Pin Moderno)
+    # TIMELINE E MARCOS DO PROJETO (Estilo Infográfico Executivo)
     # ==========================================
     with tab_timeline:
-        st.markdown("### 📈 Análise de Ciclo de Vida do Projeto (Timeline)")
-        st.write("Visão consolidada por **Projeto (SO)**: fluxo de entregas, marcos logísticos com pins arredondados e ocorrências de Perdas (Retrabalhos e Paradas).")
+        st.markdown("### 📈 Análise de Ciclo de Vida do Projeto (Timeline Executiva)")
+        st.write("Visão consolidada estilo infográfico: todos os eventos, entregas, paradas e materiais dispostos cronologicamente para apresentação gerencial.")
         
         if not df_sos_ativas.empty:
             lista_sos_tl = [f"{r['so']} - {r['customer'] if pd.notna(r['customer']) else ''}" for _, r in df_sos_ativas.iterrows()]
@@ -2744,7 +2744,7 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
             if so_selecionada_str != "- Selecione -":
                 so_selecionada = so_selecionada_str.split(" - ")[0].strip()
                 
-                # 1. DADOS KANBAN (Engenharia e Fábrica)
+                # 1. BUSCA DE DADOS KANBAN (Engenharia e Fábrica)
                 df_fases_tl = pd.read_sql_query("""
                     SELECT k.fase, k.responsavel, k.categoria, k.data_inicio, k.data_fim, 
                            COALESCE(k.wo, 'Engenharia') as identificador
@@ -2753,109 +2753,164 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                     WHERE k.so = %(so)s OR p.so = %(so)s
                 """, engine, params={"so": so_selecionada})
                 
-                df_fases_tl['data_fim_plot'] = df_fases_tl['data_fim'].fillna(pd.Timestamp.now() - pd.Timedelta(hours=3))
-                
-                # 2. DADOS DE APONTAMENTOS REAIS (Retrabalhos e Paradas)
+                # 2. BUSCA DE APONTAMENTOS REAIS (Retrabalhos e Paradas)
                 df_apont_tl = pd.read_sql_query("""
                     SELECT atividade as fase, operador as responsavel, tipo as categoria, 
-                           data_registro, hora_inicio, hora_fim, wo as identificador
+                           data_registro, hora_inicio
                     FROM apontamentos
                     WHERE so = %(so)s AND tipo IN ('Retrabalho', 'Parada')
                 """, engine, params={"so": so_selecionada})
                 
-                if not df_apont_tl.empty:
-                    def converter_datahora(d_str, h_str):
-                        try:
-                            if len(h_str.split(':')) == 2: h_str += ':00'
-                            return pd.to_datetime(f"{d_str} {h_str}", format="%d/%m/%Y %H:%M:%S")
-                        except:
-                            return pd.NaT
-
-                    df_apont_tl['data_inicio'] = df_apont_tl.apply(lambda r: converter_datahora(r['data_registro'], r['hora_inicio']), axis=1)
-                    df_apont_tl['data_fim_plot'] = df_apont_tl.apply(lambda r: converter_datahora(r['data_registro'], r['hora_fim']), axis=1)
-                    df_apont_tl['data_fim'] = df_apont_tl['data_fim_plot']
-                    df_apont_tl = df_apont_tl.dropna(subset=['data_inicio', 'data_fim_plot'])
-                    
-                    if not df_apont_tl.empty:
-                        df_fases_tl = pd.concat([df_fases_tl, df_apont_tl[['fase', 'responsavel', 'categoria', 'data_inicio', 'data_fim', 'data_fim_plot', 'identificador']]], ignore_index=True)
-                
-                # 3. DADOS DE MATERIAL (Marcos Logísticos)
+                # 3. BUSCA DE MATERIAL (Marcos Logísticos)
                 df_mats_tl = pd.read_sql_query("""
                     SELECT codigo, data_recebimento 
                     FROM kanban_materiais 
                     WHERE wo = %(so)s AND status = 'Recebido'
                 """, engine, params={"so": so_selecionada})
                 
+                # --- MONTAGEM DO CONJUNTO DE EVENTOS PARA O INFOGRÁFICO ---
+                eventos = []
+
+                # Eventos do Kanban (Cria 1 ponto pro Início e 1 ponto pro Fim)
                 if not df_fases_tl.empty:
-                    df_fases_tl['Texto_Barra'] = df_fases_tl['fase'] + " (" + df_fases_tl['identificador'] + ")"
-                    df_fases_tl['Label_Hover'] = df_fases_tl['identificador'] + " | Resp: " + df_fases_tl['responsavel']
+                    for _, r in df_fases_tl.iterrows():
+                        if pd.notna(r['data_inicio']):
+                            eventos.append({
+                                'Data': pd.to_datetime(r['data_inicio']),
+                                'Nome': f"Início: {r['fase']}",
+                                'Categoria': r['categoria'],
+                                'Detalhe': f"Resp: {r['responsavel']} | Ref: {r['identificador']}",
+                                'Icone': '⚙️' if r['categoria'] == 'Engenharia' else '🏭'
+                            })
+                        if pd.notna(r['data_fim']):
+                            eventos.append({
+                                'Data': pd.to_datetime(r['data_fim']),
+                                'Nome': f"Conclusão: {r['fase']}",
+                                'Categoria': r['categoria'],
+                                'Detalhe': f"Resp: {r['responsavel']} | Ref: {r['identificador']}",
+                                'Icone': '✅'
+                            })
+
+                # Eventos de Perdas (Retrabalho e Parada)
+                if not df_apont_tl.empty:
+                    def converter_datahora(d_str, h_str):
+                        try:
+                            if len(h_str.split(':')) == 2: h_str += ':00'
+                            return pd.to_datetime(f"{d_str} {h_str}", format="%d/%m/%Y %H:%M:%S")
+                        except: return pd.NaT
+
+                    df_apont_tl['data_inicio'] = df_apont_tl.apply(lambda r: converter_datahora(r['data_registro'], r['hora_inicio']), axis=1)
+                    for _, r in df_apont_tl.dropna(subset=['data_inicio']).iterrows():
+                        eventos.append({
+                            'Data': r['data_inicio'],
+                            'Nome': f"{r['categoria']}: {r['fase'][:15]}...",
+                            'Categoria': r['categoria'],
+                            'Detalhe': f"Op: {r['responsavel']}",
+                            'Icone': '⚠️' if r['categoria'] == 'Retrabalho' else '🛑'
+                        })
+
+                # Eventos Logísticos
+                if not df_mats_tl.empty:
+                    for _, r in df_mats_tl.iterrows():
+                        if pd.notna(r['data_recebimento']):
+                            eventos.append({
+                                'Data': pd.to_datetime(r['data_recebimento']),
+                                'Nome': f"Material Rec.",
+                                'Categoria': 'Logística',
+                                'Detalhe': f"Código: {r['codigo']}",
+                                'Icone': '📦'
+                            })
+
+                if eventos:
+                    df_ev = pd.DataFrame(eventos)
+                    df_ev = df_ev.sort_values('Data').reset_index(drop=True)
+                    df_ev['Data_Str'] = df_ev['Data'].dt.strftime('%d/%m/%Y %H:%M')
+
+                    # --- CONSTRUÇÃO DO GRÁFICO (Estilo Lollipop / Pin) ---
+                    fig_tl = go.Figure()
+
+                    # 1. Linha Base Central (Eixo X visível)
+                    data_min = df_ev['Data'].min() - pd.Timedelta(days=1)
+                    data_max = df_ev['Data'].max() + pd.Timedelta(days=1)
                     
+                    fig_tl.add_trace(go.Scatter(
+                        x=[data_min, data_max], y=[0, 0],
+                        mode="lines", line=dict(color="#ced4da", width=5),
+                        hoverinfo="skip", showlegend=False
+                    ))
+
+                    # 2. Definição de Cores e Alturas (Staggering para não encavalar)
                     cores_map = {
-                        "Engenharia": "#004a99", 
-                        "Fábrica": "#28a745",
-                        "Retrabalho": "#dc3545",
-                        "Parada": "#ffc107"     
+                        "Engenharia": "#004a99", # Azul Escuro
+                        "Fábrica": "#28a745",    # Verde
+                        "Retrabalho": "#dc3545", # Vermelho
+                        "Parada": "#ffc107",     # Amarelo
+                        "Logística": "#17a2b8"   # Ciano
                     }
                     
-                    fig_tl = px.timeline(
-                        df_fases_tl, 
-                        x_start="data_inicio", 
-                        x_end="data_fim_plot", 
-                        y="fase", 
-                        color="categoria",
-                        hover_name="Label_Hover",
-                        text="Texto_Barra",
-                        color_discrete_map=cores_map,
-                        title=f"Evolução Histórica do Projeto SO: {so_selecionada}"
-                    )
-                    
-                    fig_tl.update_traces(textposition='inside', textfont_size=12, marker_line_color='black', marker_line_width=0.5)
-                    
-                    fases_ordenadas = list(df_fases_tl['fase'].unique())
-                    
-                    if not df_mats_tl.empty:
-                        df_mats_tl['data_recebimento'] = pd.to_datetime(df_mats_tl['data_recebimento'])
-                        
+                    # Alturas alternadas para os balões de texto (+ e - afastam da linha central)
+                    y_levels = [1, -1, 1.5, -1.5, 0.6, -0.6, 2, -2, 1.2, -1.2]
+
+                    # 3. Desenhando cada evento (Haste + Círculo + Texto)
+                    for i, row in df_ev.iterrows():
+                        y_pos = y_levels[i % len(y_levels)]
+                        cor = cores_map.get(row['Categoria'], "#6c757d")
+
+                        # Haste (linha vertical fina)
                         fig_tl.add_trace(go.Scatter(
-                            x=df_mats_tl['data_recebimento'],
-                            y=["📍 Marcos Logísticos"] * len(df_mats_tl),
-                            mode='lines+markers+text',
-                            line=dict(color='#6c757d', width=4), 
-                            marker=dict(symbol='circle', size=18, color='#0dcaf0', line=dict(width=2, color='#055160')), 
-                            text="📦 " + df_mats_tl['codigo'],
-                            textposition="top center",
-                            textfont=dict(size=11, color="black", family="sans-serif"),
-                            name="Materiais Recebidos",
-                            hoverinfo="text",
-                            hovertext="Material Recebido: " + df_mats_tl['codigo']
+                            x=[row['Data'], row['Data']], y=[0, y_pos],
+                            mode="lines", line=dict(color=cor, width=2),
+                            hoverinfo="skip", showlegend=False
                         ))
-                        
-                        for d in df_mats_tl['data_recebimento']:
-                            fig_tl.add_vline(
-                                x=d.timestamp() * 1000, 
-                                line_width=1, line_dash="dot", line_color="#adb5bd", opacity=0.8
-                            )
-                            
-                        fases_ordenadas.append("📍 Marcos Logísticos")
-                    
-                    fig_tl.update_yaxes(categoryorder="array", categoryarray=fases_ordenadas[::-1])
+
+                        # Círculo com o Ícone (O Pin)
+                        fig_tl.add_trace(go.Scatter(
+                            x=[row['Data']], y=[y_pos],
+                            mode="markers+text",
+                            marker=dict(size=32, color="white", line=dict(color=cor, width=3.5)),
+                            text=row['Icone'],
+                            textfont=dict(size=16),
+                            textposition="middle center",
+                            hoverinfo="text",
+                            hovertext=f"<b>{row['Data_Str']}</b><br>{row['Categoria']}<br><i>{row['Nome']}</i><br>{row['Detalhe']}",
+                            showlegend=False
+                        ))
+
+                        # Texto Descritivo flutuando acima ou abaixo do Pin
+                        offset = 0.35 if y_pos > 0 else -0.35
+                        fig_tl.add_annotation(
+                            x=row['Data'], y=y_pos + offset,
+                            text=f"<b>{row['Nome']}</b><br><span style='font-size:11px;color:gray'>{row['Data_Str'][:10]}</span>",
+                            showarrow=False,
+                            font=dict(size=12, color="#333"),
+                            align="center"
+                        )
+
+                    # 4. Adicionando botões de legenda simulados
+                    for cat, cor in cores_map.items():
+                        if cat in df_ev['Categoria'].values:
+                            fig_tl.add_trace(go.Scatter(
+                                x=[None], y=[None], mode="markers",
+                                marker=dict(size=12, color=cor),
+                                name=cat
+                            ))
+
+                    # 5. Layout e Acabamento Final
                     fig_tl.update_layout(
-                        height=max(500, len(fases_ordenadas) * 65), 
-                        margin=dict(t=40, b=40),
+                        height=600,
                         plot_bgcolor='white',
-                        xaxis=dict(showgrid=True, gridcolor='#f8f9fa', gridwidth=1),
-                        yaxis=dict(showgrid=False, title="")
+                        margin=dict(t=30, b=50, l=20, r=20),
+                        xaxis=dict(showgrid=True, gridcolor='#f8f9fa', showline=False, zeroline=False, tickformat="%d/%m\n%Y"),
+                        yaxis=dict(showgrid=False, showticklabels=False, zeroline=False, range=[-3, 3]),
+                        legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, title="")
                     )
-                    
+
                     st.plotly_chart(fig_tl, use_container_width=True)
                     
-                    with st.expander("Ver Log Exato de Dados do Projeto"):
-                        df_log = df_fases_tl.copy()
-                        df_log['data_inicio'] = pd.to_datetime(df_log['data_inicio']).dt.strftime('%d/%m/%Y %H:%M')
-                        df_log['data_fim'] = pd.to_datetime(df_log['data_fim']).dt.strftime('%d/%m/%Y %H:%M').replace("NaT", "Em Andamento")
-                        st.dataframe(df_log[['categoria', 'fase', 'identificador', 'responsavel', 'data_inicio', 'data_fim']].sort_values(by='data_inicio'), use_container_width=True)
+                    with st.expander("Ver Log Tabela de Eventos"):
+                        st.dataframe(df_ev[['Data_Str', 'Categoria', 'Nome', 'Detalhe']].rename(columns={'Data_Str': 'Data'}), use_container_width=True)
                 else:
-                    st.info("O projeto selecionado não possui movimentações, retrabalhos ou paradas registradas.")
+                    st.info("O projeto selecionado não possui eventos registrados (Kanban, Perdas ou Material).")
         else:
             st.info("Nenhuma Ordem de Venda (SO) ativa ou finalizada recentemente encontrada.")
 
