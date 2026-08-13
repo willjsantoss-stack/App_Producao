@@ -2428,32 +2428,48 @@ elif menu_selecionado == "📅 Planejamento de Carga":
 # ABA: KANBAN E TIMELINE
 # ------------------------------------------
 elif menu_selecionado == "🗂️ Kanban & Timeline":
-    st.markdown("## 🗂️ Kanban, Materiais e Timeline")
+    c_tit, c_btn = st.columns([4, 1])
+    c_tit.markdown("## 🗂️ Kanban, Materiais e Timeline")
     
-    # Carrega as WOs ativas para o usuário poder selecionar
-    df_wos_ativas = pd.read_sql_query("SELECT wo, so, product_name FROM projetos WHERE UPPER(TRIM(status_producao)) != 'FINALIZADO' OR status_producao IS NULL", engine)
+    # Botão de Sincronização Manual (Resolve o problema de atualização para outros usuários)
+    st.write("")
+    if c_btn.button("🔄 Sincronizar Tela", type="primary", use_container_width=True, help="Puxar as últimas alterações feitas por outros usuários."):
+        st.rerun()
     
-    # Cria as três sub-abas principais do setor
+    # --- REGRA DE 30 DIAS BLINDADA (Ignora finalizados sem data) ---
+    query_so_ativas = """
+        SELECT DISTINCT p.so, p.customer 
+        FROM projetos p
+        LEFT JOIN (
+            SELECT wo, MAX(data_fim) as ultima_mov
+            FROM kanban_fases
+            GROUP BY wo
+        ) k ON p.wo = k.wo
+        WHERE p.so IS NOT NULL AND TRIM(p.so) != ''
+        AND (
+            COALESCE(UPPER(TRIM(p.status_producao)), '') != 'FINALIZADO' 
+            OR (k.ultima_mov IS NOT NULL AND k.ultima_mov >= CURRENT_DATE - INTERVAL '30 days')
+        )
+    """
+    df_sos_ativas = pd.read_sql_query(query_so_ativas, engine)
+    
+    opcoes_projetos = []
+    if not df_sos_ativas.empty:
+        for _, r in df_sos_ativas.iterrows():
+            cliente = r['customer'] if pd.notna(r['customer']) else "Sem Cliente"
+            opcoes_projetos.append(f"{r['so']} - {cliente}")
+    else:
+        opcoes_projetos = ["- Nenhum projeto ativo -"]
+
     tab_kanban, tab_materiais, tab_timeline = st.tabs(["📋 Quadro Kanban", "📦 Gestão de Materiais", "📈 Linha do Tempo (Timeline)"])
     
     # ==========================================
-    # GESTÃO DE MATERIAIS (Fase 2 - Atualizada SO)
+    # GESTÃO DE MATERIAIS
     # ==========================================
     with tab_materiais:
         st.markdown("### ⚠️ Controle de Materiais Faltantes e Recebimentos")
         st.write("Registre os materiais que travam a produção. A data de recebimento formará um marco na linha do tempo do projeto.")
         
-        # Buscando apenas SOs Únicas e o nome do Cliente
-        df_sos_ativas = pd.read_sql_query("SELECT DISTINCT so, customer FROM projetos WHERE UPPER(TRIM(status_producao)) != 'FINALIZADO' OR status_producao IS NULL", engine)
-        
-        opcoes_projetos = []
-        if not df_sos_ativas.empty:
-            for _, r in df_sos_ativas.iterrows():
-                cliente = r['customer'] if pd.notna(r['customer']) else "Cliente Não Informado"
-                opcoes_projetos.append(f"{r['so']} - {cliente}")
-        else:
-            opcoes_projetos = ["- Nenhum projeto ativo -"]
-
         col_mat_esq, col_mat_dir = st.columns([1, 2])
         
         with col_mat_esq:
@@ -2476,9 +2492,10 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                             so_extraida = projeto_selecionado.split(" - ")[0].strip()
                             dt_prev_str = dt_prev.strftime('%Y-%m-%d') if dt_prev else None
                             
+                            # Fuso horário brasileiro forçado na gravação
                             cursor.execute("""
                                 INSERT INTO kanban_materiais (wo, codigo, descricao, quantidade, data_apontamento, data_prevista_chegada, status)
-                                VALUES (%s, %s, %s, %s, NOW(), %s, 'Faltante')
+                                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, 'Faltante')
                             """, (so_extraida, cod_mat.strip(), desc_mat.strip(), qtd_mat, dt_prev_str))
                             conn.commit()
                             st.success("✔️ Material registrado como faltante na SO!")
@@ -2500,7 +2517,7 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                         c_info.caption(f"📅 *Previsão de Chegada: {prev}*")
                         
                         if c_btn.button("📦 Dar Baixa (Recebido)", key=f"rec_mat_{row['id']}", use_container_width=True):
-                            cursor.execute("UPDATE kanban_materiais SET status = 'Recebido', data_recebimento = CURRENT_DATE WHERE id = %s", (row['id'],))
+                            cursor.execute("UPDATE kanban_materiais SET status = 'Recebido', data_recebimento = CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo' WHERE id = %s", (row['id'],))
                             conn.commit()
                             st.success("✔️ Recebimento confirmado! Marco gerado para a Timeline.")
                             time_sys.sleep(1.5)
@@ -2509,7 +2526,7 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                 st.info("🎉 Nenhum material faltante no momento. Tudo liberado!")
 
     # ==========================================
-    # KANBAN VISUAL E MARCOS (Fase 3 - Interativa)
+    # KANBAN VISUAL E MARCOS
     # ==========================================
     with tab_kanban:
         st.markdown("### 📋 Gestão Visual de Fluxo e Marcos")
@@ -2517,11 +2534,9 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
         fases_eng = ["Desenhos do barramento", "Projeto Elétrico", "Lista de Fiação", "Projeto Mecânico", "Separação de Material", "Solicitação de embalagem"]
         fases_fab = ["Produção do Barramento", "Impressão de identificadores", "Montagem Mecânica", "Montagem Elétrica", "Testes", "Embalagem"]
         
-        # Busca os responsáveis diretamente da tabela gerenciável
         df_proj = pd.read_sql_query("SELECT nome, especialidade FROM projetistas", engine)
         lista_responsaveis = ["- Selecione -"] + [f"{r['nome']} ({r['especialidade']})" for _, r in df_proj.iterrows()]
 
-        # Nomes das abas internas atualizados
         tab_board_eng, tab_board_fab = st.tabs(["⚙️ Marcos de Engenharia e Logística", "🏭 Fluxo de Fábrica (Por WO)"])
         
         # ---------------------------------------------------------
@@ -2529,40 +2544,20 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
         # ---------------------------------------------------------
         with tab_board_eng:
             with st.expander("➕ Criar Cartão Kanban", expanded=False):
-                
-                # --- REGRA DE 30 DIAS PARA PROJETOS (Abertos ou Recentes) ---
-                df_sos_eng = pd.read_sql_query("""
-                    SELECT DISTINCT p.so, p.customer 
-                    FROM projetos p
-                    LEFT JOIN (
-                        SELECT wo, MAX(data_fim) as ultima_mov
-                        FROM kanban_fases
-                        GROUP BY wo
-                    ) k ON p.wo = k.wo
-                    WHERE p.so IS NOT NULL AND TRIM(p.so) != ''
-                    AND (
-                        UPPER(TRIM(p.status_producao)) != 'FINALIZADO' 
-                        OR p.status_producao IS NULL
-                        OR k.ultima_mov >= CURRENT_DATE - INTERVAL '30 days'
-                    )
-                """, engine)
-                
-                opcoes_projetos_eng = ["- Selecione o Projeto -"] + [f"{r['so']} - {r['customer'] if pd.notna(r['customer']) else 'Sem Cliente'}" for _, r in df_sos_eng.iterrows()]
-                
                 ce1, ce2, ce3, ce4 = st.columns(4)
-                so_k_sel = ce1.selectbox("Projeto (SO) / Cliente:", opcoes_projetos_eng, key="so_start_k")
+                so_k_sel = ce1.selectbox("Projeto (SO) / Cliente:", opcoes_projetos, key="so_start_k")
                 fase_eng_sel = ce2.selectbox("Fase / Marco:", ["- Selecione -"] + fases_eng, key="fase_eng_start_k")
                 resp_eng_sel = ce3.selectbox("Responsável:", lista_responsaveis, key="resp_eng_start_k")
                 data_prev_eng = ce4.date_input("Previsão de Entrega:", date.today() + timedelta(days=5), format="DD/MM/YYYY", key="prev_eng_start_k")
 
                 if st.button("✅ Criar Cartão Kanban", type="primary", use_container_width=True):
-                    if fase_eng_sel != "- Selecione -" and so_k_sel != "- Selecione o Projeto -" and resp_eng_sel != "- Selecione -":
+                    if fase_eng_sel != "- Selecione -" and so_k_sel != "- Nenhum projeto ativo -" and resp_eng_sel != "- Selecione -":
                         so_limpa = so_k_sel.split(" - ")[0].strip()
                         resp_limpo = resp_eng_sel.split(" (")[0]
                         
                         cursor.execute("""
                             INSERT INTO kanban_fases (so, categoria, fase, responsavel, data_inicio, data_prevista, status)
-                            VALUES (%s, 'Engenharia', %s, %s, NOW(), %s, 'Em Andamento')
+                            VALUES (%s, 'Engenharia', %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, 'Em Andamento')
                         """, (so_limpa, fase_eng_sel, resp_limpo, data_prev_eng.strftime('%Y-%m-%d')))
                         conn.commit()
                         st.success(f"✔️ Cartão de {fase_eng_sel} criado para a SO {so_limpa}!")
@@ -2594,7 +2589,7 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                             st.write(f"🎯 **Previsão:** {d_prev}")
                             
                             if st.button("🏁 Finalizar Entrega", key=f"fin_eng_{row['id']}", use_container_width=True):
-                                cursor.execute("UPDATE kanban_fases SET data_fim = NOW(), status = 'Concluído' WHERE id = %s", (row['id'],))
+                                cursor.execute("UPDATE kanban_fases SET data_fim = CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', status = 'Concluído' WHERE id = %s", (row['id'],))
                                 conn.commit()
                                 st.success("Marco concluído e enviado para a Timeline!")
                                 time_sys.sleep(1); st.rerun()
@@ -2609,11 +2604,9 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                 if tipo_cartao == "Vinculado a Projeto (SO/WO)":
                     col_f1, col_f2, col_f3 = st.columns(3)
                     
-                    df_sos_fab = pd.read_sql_query("SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL AND TRIM(so) != ''", engine)
-                    lista_sos_fab = ["- Selecione o Projeto -"] + [f"{r['so']} - {r['customer'] if pd.notna(r['customer']) else 'Sem Cliente'}" for _, r in df_sos_fab.iterrows()]
-                    so_fab_sel = col_f1.selectbox("1. Projeto (SO):", lista_sos_fab, key="so_fab_sel_k")
+                    so_fab_sel = col_f1.selectbox("1. Projeto (SO):", opcoes_projetos, key="so_fab_sel_k")
                     
-                    if so_fab_sel != "- Selecione o Projeto -":
+                    if so_fab_sel != "- Nenhum projeto ativo -":
                         so_clean_fab = so_fab_sel.split(" - ")[0].strip()
                         df_wos_fab = pd.read_sql_query(f"SELECT wo, product_name, status_producao FROM projetos WHERE so = '{so_clean_fab}'", engine)
                         lista_wos_fab = ["- Selecione a WO -"] + [f"{r['wo']} - {r['product_name']} ({r['status_producao']})" for _, r in df_wos_fab.iterrows()]
@@ -2625,10 +2618,9 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                     fase_fab_sel = col_f3.selectbox("3. Fase do Setor:", ["- Selecione -"] + fases_fab, key="fase_fab_start_k")
                     
                     if st.button("➕ Criar Cartão Kanban", type="primary", use_container_width=True):
-                        if so_fab_sel != "- Selecione o Projeto -" and wo_fab_sel != "- Selecione a WO -" and wo_fab_sel != "- Aguardando Projeto -" and fase_fab_sel != "- Selecione -":
+                        if so_fab_sel != "- Nenhum projeto ativo -" and wo_fab_sel != "- Selecione a WO -" and wo_fab_sel != "- Aguardando Projeto -" and fase_fab_sel != "- Selecione -":
                             wo_clean_fab = wo_fab_sel.split(" - ")[0].strip()
                             
-                            # O cartão nasce "Não Iniciado", sem data de início ainda
                             cursor.execute("""
                                 INSERT INTO kanban_fases (so, wo, categoria, fase, responsavel, status)
                                 VALUES (%s, %s, 'Fábrica', %s, 'Equipe de Fábrica', 'Não Iniciado')
@@ -2641,25 +2633,35 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                             st.error("Preencha todos os campos para criar o cartão.")
                             
                 else: 
-                    col_a1, col_a2 = st.columns(2)
-                    wo_avulsa_txt = col_a1.text_input("Identificação (Ex: Lote Embalagem 01):", key="wo_avulsa_txt")
-                    fase_avulsa_sel = col_a2.selectbox("Fase do Setor:", ["- Selecione -"] + fases_fab, key="fase_avulsa_start_k")
+                    col_a1, col_a2, col_a3 = st.columns(3)
+                    so_avulsa_sel = col_a1.selectbox("1. Projeto (SO):", opcoes_projetos, key="so_avulsa_start_k")
+                    wo_avulsa_txt = col_a2.text_input("2. Identificação / Cartão:", key="wo_avulsa_txt")
+                    fase_avulsa_sel = col_a3.selectbox("3. Fase do Setor:", ["- Selecione -"] + fases_fab, key="fase_avulsa_start_k")
                     
                     if st.button("➕ Criar Cartão Kanban (Avulso)", type="primary", use_container_width=True):
-                        if wo_avulsa_txt.strip() and fase_avulsa_sel != "- Selecione -":
+                        if so_avulsa_sel != "- Nenhum projeto ativo -" and wo_avulsa_txt.strip() and fase_avulsa_sel != "- Selecione -":
+                            so_limpa = so_avulsa_sel.split(" - ")[0].strip()
                             cursor.execute("""
                                 INSERT INTO kanban_fases (so, wo, categoria, fase, responsavel, status)
-                                VALUES ('AVULSO', %s, 'Fábrica', %s, 'Equipe de Fábrica', 'Não Iniciado')
-                            """, (wo_avulsa_txt.strip(), fase_avulsa_sel))
+                                VALUES (%s, %s, 'Fábrica', %s, 'Equipe de Fábrica', 'Não Iniciado')
+                            """, (so_limpa, wo_avulsa_txt.strip(), fase_avulsa_sel))
                             conn.commit()
-                            st.success("Cartão avulso criado com sucesso!")
+                            st.success("Cartão avulso criado e vinculado à SO com sucesso!")
                             time_sys.sleep(1.5); st.rerun()
                         else:
-                            st.error("Preencha a identificação e a fase.")
+                            st.error("Preencha o Projeto, a Identificação e a Fase.")
 
             st.markdown("---")
             
-            # --- Atualizar visualização dos cards de Fábrica ---
+            # --- FORÇA A ATUALIZAÇÃO DO BANCO DE DADOS ---
+            try:
+                cursor.execute("ALTER TABLE kanban_fases ADD COLUMN IF NOT EXISTS so TEXT;")
+                cursor.execute("ALTER TABLE kanban_fases ADD COLUMN IF NOT EXISTS data_prevista DATE;")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+            # ------------------------------------------------------------------------------
+
             df_kanban_fab = pd.read_sql_query("""
                 SELECT k.id, k.so, k.wo, k.fase, k.responsavel, k.data_inicio, k.status as card_status,
                        p_wo.product_name as wo_product, p_wo.status_producao as wo_status
@@ -2678,55 +2680,49 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                         with st.container(border=True):
                             st.markdown(f"<h5 style='margin-bottom:0px; color:#28a745;'>{row['wo']}</h5>", unsafe_allow_html=True)
                             
-                            # Mostra a SO (Projeto)
-                            if row['so'] and row['so'] != 'AVULSO':
+                            if row['so']:
                                 st.markdown(f"**Projeto:** {row['so']}")
                             
                             prod_nome = row['wo_product'] if pd.notna(row['wo_product']) else "Atividade Avulsa"
                             st.caption(f"{prod_nome}")
                             
-                            # Indicador Visual do Status do Cartão (ATUALIZADO PARA "Não Iniciado")
                             cor_card = "#6c757d" if row['card_status'] == 'Não Iniciado' else ("#004a99" if row['card_status'] == 'Em Andamento' else "#dc3545")
                             st.markdown(f"**Status:** <span style='color:{cor_card}; font-weight:bold;'>{row['card_status']}</span>", unsafe_allow_html=True)
                             
                             if pd.notna(row['data_inicio']):
-                                d_ini = pd.to_datetime(row['data_inicio']).strftime('%d/%m %H:%M')
+                                d_ini = pd.to_datetime(row['data_inicio']).strftime('%d/%m/%Y %H:%M')
                                 st.caption(f"⏳ Início: {d_ini}")
                             else:
                                 st.caption("⏳ Não iniciado")
                             
-                            # MENU DE AÇÕES DENTRO DO CARTÃO
                             opcoes_acao = ["- Selecione a Ação -", "▶️ Iniciar / Retomar", "⏸️ Parar Cartão", "✅ Finalizar Cartão", "🏁 Finalizar WO (Encerrar)", "🗑️ Excluir Cartão"]
                             acao = st.selectbox("Ações:", opcoes_acao, key=f"acao_{row['id']}", label_visibility="collapsed")
                             
                             if acao == "▶️ Iniciar / Retomar":
                                 if st.button("Executar Ação", key=f"btn_ini_{row['id']}", use_container_width=True):
                                     if pd.isna(row['data_inicio']):
-                                        cursor.execute("UPDATE kanban_fases SET status = 'Em Andamento', data_inicio = NOW() WHERE id = %s", (row['id'],))
+                                        cursor.execute("UPDATE kanban_fases SET status = 'Em Andamento', data_inicio = CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo' WHERE id = %s", (row['id'],))
                                     else:
                                         cursor.execute("UPDATE kanban_fases SET status = 'Em Andamento' WHERE id = %s", (row['id'],))
                                         
-                                    if row['so'] != 'AVULSO':
-                                        cursor.execute("UPDATE projetos SET status_producao = 'Em Montagem' WHERE wo = %s", (row['wo'],))
+                                    cursor.execute("UPDATE projetos SET status_producao = 'Em Montagem' WHERE wo = %s", (row['wo'],))
                                     conn.commit(); st.rerun()
                                     
                             elif acao == "⏸️ Parar Cartão":
                                 if st.button("Executar Ação", key=f"btn_par_{row['id']}", use_container_width=True):
                                     cursor.execute("UPDATE kanban_fases SET status = 'Parado' WHERE id = %s", (row['id'],))
-                                    if row['so'] != 'AVULSO':
-                                        cursor.execute("UPDATE projetos SET status_producao = 'Parado (Material)' WHERE wo = %s", (row['wo'],))
+                                    cursor.execute("UPDATE projetos SET status_producao = 'Parado (Material)' WHERE wo = %s", (row['wo'],))
                                     conn.commit(); st.rerun()
                                     
                             elif acao == "✅ Finalizar Cartão":
                                 if st.button("Executar Ação", key=f"btn_conc_{row['id']}", use_container_width=True):
-                                    cursor.execute("UPDATE kanban_fases SET data_fim = NOW(), status = 'Concluído' WHERE id = %s", (row['id'],))
+                                    cursor.execute("UPDATE kanban_fases SET data_fim = CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', status = 'Concluído' WHERE id = %s", (row['id'],))
                                     conn.commit(); st.rerun()
                                     
                             elif acao == "🏁 Finalizar WO (Encerrar)":
                                 if st.button("Executar Ação", key=f"btn_fin_{row['id']}", type="primary", use_container_width=True):
-                                    cursor.execute("UPDATE kanban_fases SET data_fim = NOW(), status = 'Concluído' WHERE id = %s", (row['id'],))
-                                    if row['so'] != 'AVULSO':
-                                        cursor.execute("UPDATE projetos SET status_producao = 'Finalizado' WHERE wo = %s", (row['wo'],))
+                                    cursor.execute("UPDATE kanban_fases SET data_fim = CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', status = 'Concluído' WHERE id = %s", (row['id'],))
+                                    cursor.execute("UPDATE projetos SET status_producao = 'Finalizado' WHERE wo = %s", (row['wo'],))
                                     conn.commit(); st.rerun()
                                     
                             elif acao == "🗑️ Excluir Cartão":
@@ -2741,26 +2737,8 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
         st.markdown("### 📈 Análise de Ciclo de Vida do Projeto (Timeline)")
         st.write("Visão consolidada por **Projeto (SO)**: fluxo de entregas, marcos logísticos com pins arredondados e ocorrências de Perdas (Retrabalhos e Paradas).")
         
-        # --- ATUALIZADO: Filtro Inteligente (Abertos ou Finalizados há < 30 dias) ---
-        df_so_timeline = pd.read_sql_query("""
-            SELECT DISTINCT p.so, p.customer 
-            FROM projetos p
-            LEFT JOIN (
-                SELECT wo, MAX(data_fim) as ultima_mov
-                FROM kanban_fases
-                GROUP BY wo
-            ) k ON p.wo = k.wo
-            WHERE p.so IS NOT NULL AND TRIM(p.so) != ''
-            AND (
-                UPPER(TRIM(p.status_producao)) != 'FINALIZADO' 
-                OR p.status_producao IS NULL
-                OR k.ultima_mov >= CURRENT_DATE - INTERVAL '30 days'
-            )
-        """, engine)
-        # ----------------------------------------------------------------------------
-        
-        if not df_so_timeline.empty:
-            lista_sos_tl = [f"{r['so']} - {r['customer'] if pd.notna(r['customer']) else ''}" for _, r in df_so_timeline.iterrows()]
+        if not df_sos_ativas.empty:
+            lista_sos_tl = [f"{r['so']} - {r['customer'] if pd.notna(r['customer']) else ''}" for _, r in df_sos_ativas.iterrows()]
             so_selecionada_str = st.selectbox("🔍 Selecione o Projeto (SO):", ["- Selecione -"] + sorted(lista_sos_tl), key="so_timeline_sel")
             
             if so_selecionada_str != "- Selecione -":
@@ -2775,7 +2753,7 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                     WHERE k.so = %(so)s OR p.so = %(so)s
                 """, engine, params={"so": so_selecionada})
                 
-                df_fases_tl['data_fim_plot'] = df_fases_tl['data_fim'].fillna(pd.Timestamp.now())
+                df_fases_tl['data_fim_plot'] = df_fases_tl['data_fim'].fillna(pd.Timestamp.now() - pd.Timedelta(hours=3))
                 
                 # 2. DADOS DE APONTAMENTOS REAIS (Retrabalhos e Paradas)
                 df_apont_tl = pd.read_sql_query("""
@@ -2838,13 +2816,12 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                     if not df_mats_tl.empty:
                         df_mats_tl['data_recebimento'] = pd.to_datetime(df_mats_tl['data_recebimento'])
                         
-                        # Adiciona a linha base central com os pins arredondados (estilo gota/pin da imagem)
                         fig_tl.add_trace(go.Scatter(
                             x=df_mats_tl['data_recebimento'],
                             y=["📍 Marcos Logísticos"] * len(df_mats_tl),
                             mode='lines+markers+text',
-                            line=dict(color='#6c757d', width=4), # Linha base horizontal cinza moderna
-                            marker=dict(symbol='circle', size=18, color='#0dcaf0', line=dict(width=2, color='#055160')), # Pins arredondados estilo infográfico
+                            line=dict(color='#6c757d', width=4), 
+                            marker=dict(symbol='circle', size=18, color='#0dcaf0', line=dict(width=2, color='#055160')), 
                             text="📦 " + df_mats_tl['codigo'],
                             textposition="top center",
                             textfont=dict(size=11, color="black", family="sans-serif"),
@@ -2880,7 +2857,7 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                 else:
                     st.info("O projeto selecionado não possui movimentações, retrabalhos ou paradas registradas.")
         else:
-            st.info("Nenhuma Ordem de Venda (SO) encontrada.")
+            st.info("Nenhuma Ordem de Venda (SO) ativa ou finalizada recentemente encontrada.")
 
 # ------------------------------------------
 # ABA: MANUTENÇÃO E IMPORTAÇÃO
