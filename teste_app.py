@@ -2470,7 +2470,8 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
         st.markdown("### ⚠️ Controle de Materiais Faltantes e Recebimentos")
         st.write("Registre os materiais que travam a produção. A data de recebimento formará um marco na linha do tempo do projeto.")
         
-        col_mat_esq, col_mat_dir = st.columns([1, 2])
+        # Proporção ajustada para dar mais espaço à visualização das colunas
+        col_mat_esq, col_mat_dir = st.columns([1, 2.5])
         
         with col_mat_esq:
             with st.container(border=True):
@@ -2481,7 +2482,9 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                     cod_mat = st.text_input("Código do Material*")
                     desc_mat = st.text_area("Descrição do Material*")
                     qtd_mat = st.number_input("Quantidade*", min_value=1, step=1)
-                    dt_prev = st.date_input("Data Prevista de Chegada (Opcional)", value=None)
+                    
+                    # CORREÇÃO: Formato Brasileiro de Data Forçado
+                    dt_prev = st.date_input("Data Prevista de Chegada (Opcional)", value=None, format="DD/MM/YYYY")
                     
                     submit_mat = st.form_submit_button("💾 Registrar Falta", type="primary", use_container_width=True)
                     
@@ -2492,7 +2495,6 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                             so_extraida = projeto_selecionado.split(" - ")[0].strip()
                             dt_prev_str = dt_prev.strftime('%Y-%m-%d') if dt_prev else None
                             
-                            # Fuso horário brasileiro forçado na gravação
                             cursor.execute("""
                                 INSERT INTO kanban_materiais (wo, codigo, descricao, quantidade, data_apontamento, data_prevista_chegada, status)
                                 VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, 'Faltante')
@@ -2503,28 +2505,54 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                             st.rerun()
 
         with col_mat_dir:
-            st.markdown("#### ⏳ Materiais Aguardando Recebimento")
+            st.markdown("#### ⏳ Materiais Aguardando Recebimento (Por Projeto)")
             df_mats = pd.read_sql_query("SELECT id, wo as so_vinculada, codigo, descricao, quantidade, data_prevista_chegada FROM kanban_materiais WHERE status = 'Faltante'", engine)
             
             if not df_mats.empty:
-                for _, row in df_mats.iterrows():
-                    with st.container(border=True):
-                        c_info, c_btn = st.columns([3, 1])
-                        c_info.write(f"**SO:** {row['so_vinculada']} | **Cód:** {row['codigo']}")
-                        c_info.write(f"**Desc:** {row['descricao']} | **Qtd:** {row['quantidade']} un")
-                        
-                        prev = pd.to_datetime(row['data_prevista_chegada']).strftime('%d/%m/%Y') if pd.notna(row['data_prevista_chegada']) else "Não informada"
-                        c_info.caption(f"📅 *Previsão de Chegada: {prev}*")
-                        
-                        if c_btn.button("📦 Dar Baixa (Recebido)", key=f"rec_mat_{row['id']}", use_container_width=True):
-                            cursor.execute("UPDATE kanban_materiais SET status = 'Recebido', data_recebimento = CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo' WHERE id = %s", (row['id'],))
-                            conn.commit()
-                            st.success("✔️ Recebimento confirmado! Marco gerado para a Timeline.")
-                            time_sys.sleep(1.5)
-                            st.rerun()
+                # Agrupa e encontra as SOs únicas que têm materiais faltantes
+                sos_faltantes = df_mats['so_vinculada'].unique()
+                
+                # Quebra em grupos de 3 colunas por linha para não esmagar a interface
+                num_cols_per_row = 3
+                for i in range(0, len(sos_faltantes), num_cols_per_row):
+                    cols_projetos = st.columns(num_cols_per_row)
+                    
+                    for j in range(num_cols_per_row):
+                        if i + j < len(sos_faltantes):
+                            so_falta = sos_faltantes[i + j]
+                            df_mats_so = df_mats[df_mats['so_vinculada'] == so_falta]
+                            
+                            with cols_projetos[j]:
+                                # Cabeçalho da Coluna do Projeto (Vermelho Alerta)
+                                st.markdown(f"<div style='text-align: center; background-color: #f8d7da; color: #721c24; padding: 6px; border-radius: 5px; margin-bottom: 10px; font-weight: bold; border: 1px solid #f5c6cb;'>SO: {so_falta}</div>", unsafe_allow_html=True)
+                                
+                                # Cartões de materiais para esta SO específica
+                                for _, row in df_mats_so.iterrows():
+                                    with st.container(border=True):
+                                        st.markdown(f"**Cód:** `{row['codigo']}`")
+                                        st.markdown(f"<span style='font-size: 14px;'>{row['descricao']}</span>", unsafe_allow_html=True)
+                                        st.write(f"**Qtd:** {row['quantidade']} un")
+                                        
+                                        prev = pd.to_datetime(row['data_prevista_chegada']).strftime('%d/%m/%Y') if pd.notna(row['data_prevista_chegada']) else "Não informada"
+                                        st.caption(f"📅 *Previsão: {prev}*")
+                                        
+                                        # Botões de Ação (Baixa e Excluir)
+                                        c_b1, c_b2 = st.columns(2)
+                                        if c_b1.button("📦 Baixa", key=f"rec_mat_{row['id']}", type="primary", use_container_width=True, help="Confirmar recebimento do material"):
+                                            cursor.execute("UPDATE kanban_materiais SET status = 'Recebido', data_recebimento = CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo' WHERE id = %s", (row['id'],))
+                                            conn.commit()
+                                            st.success("Recebido!")
+                                            time_sys.sleep(1)
+                                            st.rerun()
+                                            
+                                        if c_b2.button("🗑️ Excluir", key=f"del_mat_{row['id']}", use_container_width=True, help="Apagar apontamento lançado errado"):
+                                            cursor.execute("DELETE FROM kanban_materiais WHERE id = %s", (row['id'],))
+                                            conn.commit()
+                                            st.success("Excluído!")
+                                            time_sys.sleep(1)
+                                            st.rerun()
             else:
-                st.info("🎉 Nenhum material faltante no momento. Tudo liberado!")
-
+                st.info("🎉 Nenhum material faltante no momento. Produção liberada!")
     # ==========================================
     # KANBAN VISUAL E MARCOS
     # ==========================================
