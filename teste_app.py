@@ -886,16 +886,16 @@ if menu_selecionado == "📝 Lançamentos":
                 st.info("👈 Selecione um operador à esquerda para visualizar sua auditoria.")
 
         # ==========================================
-        # PAINEL DE GESTÃO DE APONTAMENTOS
+        # PAINEL DE GESTÃO DE APONTAMENTOS (Atualizado com Erro e Causador)
         # ==========================================
         st.markdown("---")
         st.markdown("### 🛠️ Gerenciar / Corrigir Apontamentos")
-        with st.expander("Clique aqui para corrigir horários ou apagar lançamentos errados", expanded=False):
-            st.caption("Dica: Se um apontamento de Banco de Horas sumiu do gráfico, selecione ele aqui e clique em 'Salvar Novo Horário' para forçar o recálculo automático.")
+        with st.expander("Clique aqui para corrigir horários, descrições ou classificações de erro", expanded=False):
+            st.caption("Dica: Selecione o apontamento abaixo para atualizar horários, justificativas, tipo de erro ou causador sem precisar recriar o lançamento.")
             data_edit = st.date_input("1. Selecione a data do apontamento:", date.today(), format="DD/MM/YYYY", key="data_edit_apont")
             data_br_edit = data_edit.strftime("%d/%m/%Y")
             
-            df_apont_edit = pd.read_sql_query("SELECT id, matricula, operador, hora_inicio, hora_fim, tipo, atividade, wo, descricao FROM apontamentos WHERE data_registro = %(dt)s", engine, params={"dt": data_br_edit})
+            df_apont_edit = pd.read_sql_query("SELECT id, matricula, operador, hora_inicio, hora_fim, tipo, atividade, wo, descricao, tipo_erro, causador_erro FROM apontamentos WHERE data_registro = %(dt)s", engine, params={"dt": data_br_edit})
             
             if not df_apont_edit.empty:
                 lista_apont = ["- Selecione -"] + [f"ID {r['id']} | {r['operador']} | {r['hora_inicio']} às {r['hora_fim']} | {r['tipo']}" for _, r in df_apont_edit.iterrows()]
@@ -909,7 +909,6 @@ if menu_selecionado == "📝 Lançamentos":
                         row_apont = filtro_ap.iloc[0]
                         st.info(f"**Detalhes Atuais:**\n\n**WO:** {row_apont['wo']} | **Tipo:** {row_apont['tipo']}")
                         
-                        # --- CÓDIGO ATUALIZADO AQUI ---
                         c_e1, c_e2 = st.columns(2)
                         try:
                             hi_edit_val = datetime.strptime(row_apont['hora_inicio'], "%H:%M:%S").time()
@@ -924,22 +923,41 @@ if menu_selecionado == "📝 Lançamentos":
                         hi_edit = c_e1.time_input("Nova Hora de Início", value=hi_edit_val, step=60, key="hi_edit")
                         hf_edit = c_e2.time_input("Nova Hora de Fim", value=hf_edit_val, step=60, key="hf_edit")
                         
-                        # NOVO CAMPO: Traz a descrição atual do banco e permite edição
+                        # --- NOVOS CAMPOS PARA EDITAR ERRO E CAUSADOR (Especialmente útil para Retrabalhos) ---
+                        if row_apont['tipo'] == 'Retrabalho':
+                            df_erros_ed = pd.read_sql_query("SELECT erro FROM tipos_erro", engine)
+                            df_causadores_ed = pd.read_sql_query("SELECT causador FROM causadores_erro", engine)
+                            
+                            lista_erros_db = df_erros_ed['erro'].tolist() if not df_erros_ed.empty else ["Nenhum cadastrado"]
+                            lista_caus_db = df_causadores_ed['causador'].tolist() if not df_causadores_ed.empty else ["Nenhum cadastrado"]
+                            
+                            # Define o índice atual do banco para já vir selecionado corretamente
+                            idx_err = lista_erros_db.index(row_apont['tipo_erro']) if row_apont['tipo_erro'] in lista_erros_db else 0
+                            idx_cau = lista_caus_db.index(row_apont['causador_erro']) if row_apont['causador_erro'] in lista_caus_db else 0
+                            
+                            ce_err, ce_cau = st.columns(2)
+                            novo_tipo_erro = ce_err.selectbox("Editar Tipo de Erro", lista_erros_db, index=idx_err, key="edit_tipo_erro")
+                            novo_causador = ce_cau.selectbox("Editar Causador", lista_caus_db, index=idx_cau, key="edit_causador")
+                        else:
+                            novo_tipo_erro = row_apont['tipo_erro']
+                            novo_causador = row_apont['causador_erro']
+                        # ---------------------------------------------------------------------------------------
+
                         desc_atual = row_apont['descricao'] if pd.notna(row_apont['descricao']) else ""
-                        nova_obs = st.text_area("Editar Observação / Descrição (Motivo do Retrabalho)", value=desc_atual, key="obs_edit_apont")
+                        nova_obs = st.text_area("Editar Observação / Descrição", value=desc_atual, key="obs_edit_apont")
                         
                         st.write("")
                         c_btn_e1, c_btn_e2 = st.columns([1, 1])
                         
-                        if c_btn_e1.button("💾 Salvar Alterações (Horário/Obs)", type="primary", use_container_width=True):
-                            # Atualiza a Query SQL para gravar a nova_obs também
+                        if c_btn_e1.button("💾 Salvar Alterações (Horário/Erro/Obs)", type="primary", use_container_width=True):
+                            # Atualiza a Query SQL incluindo o Tipo de Erro e o Causador
                             cursor.execute(
-                                "UPDATE apontamentos SET hora_inicio=%s, hora_fim=%s, descricao=%s WHERE id=%s", 
-                                (str(hi_edit), str(hf_edit), nova_obs, id_apont)
+                                "UPDATE apontamentos SET hora_inicio=%s, hora_fim=%s, descricao=%s, tipo_erro=%s, causador_erro=%s WHERE id=%s", 
+                                (str(hi_edit), str(hf_edit), nova_obs, novo_tipo_erro, novo_causador, id_apont)
                             )
                             conn.commit()
                             recalcular_dia(conn, row_apont['matricula'], data_br_edit)
-                            st.success("✔️ Apontamento e Observação atualizados com sucesso!")
+                            st.success("✔️ Apontamento, Erro e Causador atualizados com sucesso!")
                             time_sys.sleep(1.5)
                             st.rerun()
                             
@@ -955,6 +973,7 @@ if menu_selecionado == "📝 Lançamentos":
                         st.error("Apontamento não encontrado no banco de dados.")
             else:
                 st.info("Nenhum apontamento registrado na data selecionada.")
+                
 # ------------------------------------------
 # ABA: DASHBOARD PROJETOS E PRODUÇÃO
 # ------------------------------------------
