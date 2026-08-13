@@ -2434,7 +2434,7 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
     df_wos_ativas = pd.read_sql_query("SELECT wo, so, product_name FROM projetos WHERE UPPER(TRIM(status_producao)) != 'FINALIZADO' OR status_producao IS NULL", engine)
     
     # Cria as três sub-abas principais do setor
-    tab_kanban, tab_materiais, tab_timeline = st.tabs(["📋 Quadro Kanban (Eng/Fábrica)", "📦 Gestão de Materiais", "📈 Linha do Tempo (Timeline)"])
+    tab_kanban, tab_materiais, tab_timeline = st.tabs(["📋 Quadro Kanban", "📦 Gestão de Materiais", "📈 Linha do Tempo (Timeline)"])
     
     # ==========================================
     # GESTÃO DE MATERIAIS (Fase 2 - Atualizada SO)
@@ -2517,36 +2517,58 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
         fases_eng = ["Desenhos do barramento", "Projeto Elétrico", "Lista de Fiação", "Projeto Mecânico", "Separação de Material", "Solicitação de embalagem"]
         fases_fab = ["Produção do Barramento", "Impressão de identificadores", "Montagem Mecânica", "Montagem Elétrica", "Testes", "Embalagem"]
         
+        # Busca os responsáveis diretamente da tabela gerenciável
         df_proj = pd.read_sql_query("SELECT nome, especialidade FROM projetistas", engine)
-        lista_responsaveis = ["Equipe de Fábrica"] + [f"{r['nome']} ({r['especialidade']})" for _, r in df_proj.iterrows()]
+        lista_responsaveis = ["- Selecione -"] + [f"{r['nome']} ({r['especialidade']})" for _, r in df_proj.iterrows()]
 
-        tab_board_eng, tab_board_fab = st.tabs(["⚙️ Marcos de Engenharia & Logística (Por Projeto/SO)", "🏭 Fluxo de Fábrica (Por WO)"])
+        # Nomes das abas internas atualizados
+        tab_board_eng, tab_board_fab = st.tabs(["⚙️ Marcos de Engenharia e Logística", "🏭 Fluxo de Fábrica (Por WO)"])
         
         # ---------------------------------------------------------
         # QUADRO 1: ENGENHARIA (Orientado a SO e Entregas)
         # ---------------------------------------------------------
         with tab_board_eng:
-            with st.expander("➕ Iniciar Novo Marco de Engenharia", expanded=False):
+            with st.expander("➕ Criar Cartão Kanban", expanded=False):
+                
+                # --- REGRA DE 30 DIAS PARA PROJETOS (Abertos ou Recentes) ---
+                df_sos_eng = pd.read_sql_query("""
+                    SELECT DISTINCT p.so, p.customer 
+                    FROM projetos p
+                    LEFT JOIN (
+                        SELECT wo, MAX(data_fim) as ultima_mov
+                        FROM kanban_fases
+                        GROUP BY wo
+                    ) k ON p.wo = k.wo
+                    WHERE p.so IS NOT NULL AND TRIM(p.so) != ''
+                    AND (
+                        UPPER(TRIM(p.status_producao)) != 'FINALIZADO' 
+                        OR p.status_producao IS NULL
+                        OR k.ultima_mov >= CURRENT_DATE - INTERVAL '30 days'
+                    )
+                """, engine)
+                
+                opcoes_projetos_eng = ["- Selecione o Projeto -"] + [f"{r['so']} - {r['customer'] if pd.notna(r['customer']) else 'Sem Cliente'}" for _, r in df_sos_eng.iterrows()]
+                
                 ce1, ce2, ce3, ce4 = st.columns(4)
-                so_k_sel = ce1.selectbox("Projeto (SO) / Cliente:", opcoes_projetos, key="so_start_k")
+                so_k_sel = ce1.selectbox("Projeto (SO) / Cliente:", opcoes_projetos_eng, key="so_start_k")
                 fase_eng_sel = ce2.selectbox("Fase / Marco:", ["- Selecione -"] + fases_eng, key="fase_eng_start_k")
                 resp_eng_sel = ce3.selectbox("Responsável:", lista_responsaveis, key="resp_eng_start_k")
                 data_prev_eng = ce4.date_input("Previsão de Entrega:", date.today() + timedelta(days=5), format="DD/MM/YYYY", key="prev_eng_start_k")
 
-                if st.button("✅ Iniciar Marco de Engenharia", type="primary", use_container_width=True):
-                    if fase_eng_sel != "- Selecione -" and so_k_sel != "- Nenhum projeto ativo -":
+                if st.button("✅ Criar Cartão Kanban", type="primary", use_container_width=True):
+                    if fase_eng_sel != "- Selecione -" and so_k_sel != "- Selecione o Projeto -" and resp_eng_sel != "- Selecione -":
                         so_limpa = so_k_sel.split(" - ")[0].strip()
-                        resp_limpo = resp_eng_sel.split(" (")[0] if resp_eng_sel != "Equipe de Fábrica" else "Equipe Fábrica"
+                        resp_limpo = resp_eng_sel.split(" (")[0]
                         
                         cursor.execute("""
                             INSERT INTO kanban_fases (so, categoria, fase, responsavel, data_inicio, data_prevista, status)
                             VALUES (%s, 'Engenharia', %s, %s, NOW(), %s, 'Em Andamento')
                         """, (so_limpa, fase_eng_sel, resp_limpo, data_prev_eng.strftime('%Y-%m-%d')))
                         conn.commit()
-                        st.success(f"✔️ Marco de {fase_eng_sel} iniciado para a SO {so_limpa}!")
+                        st.success(f"✔️ Cartão de {fase_eng_sel} criado para a SO {so_limpa}!")
                         time_sys.sleep(1.5); st.rerun()
                     else:
-                        st.error("Selecione o Projeto e a Fase.")
+                        st.error("Preencha o Projeto, Fase e Responsável para iniciar.")
             
             st.markdown("---")
             df_kanban_eng = pd.read_sql_query("""
@@ -2880,7 +2902,7 @@ elif menu_selecionado == "🔍 Manutenção":
         cat_manut = st.radio("Selecione a Tabela de Visualização/Edição:", [
             "Colaboradores", "Férias", "Feriados", 
             "Calendário Lucy", "Configurações (Erros e Paradas)", "Parâmetros de Jornada", 
-            "📥 Importação de Excel (Em Lote)"
+            "Responsáveis (Projetos)", "📥 Importação de Excel (Em Lote)"
         ], horizontal=True)
         
         with st.container(border=True):
@@ -2982,6 +3004,26 @@ elif menu_selecionado == "🔍 Manutenção":
                     df_colab_view = pd.read_sql_query("SELECT * FROM colaboradores", engine)
                     df_colab_view = padronizar_datas_para_tela(df_colab_view, ['data_admissao', 'data_demissao'])
                     st.dataframe(df_colab_view, width="stretch")
+
+            elif cat_manut == "Responsáveis (Projetos)":
+                st.write("**Cadastrar Novo Responsável / Equipe**")
+                with st.form("form_resp"):
+                    c_r1, c_r2 = st.columns(2)
+                    n_resp = c_r1.text_input("Nome do Responsável ou Equipe:")
+                    n_setor = c_r2.text_input("Setor / Especialidade (Ex: Engenharia Elétrica):")
+                    
+                    if st.form_submit_button("💾 Salvar Responsável"):
+                        if n_resp and n_setor:
+                            cursor.execute("INSERT INTO projetistas (nome, especialidade) VALUES (%s, %s)", (n_resp, n_setor))
+                            conn.commit()
+                            st.success("Responsável cadastrado!")
+                            st.rerun()
+                        else:
+                            st.error("Preencha o Nome e o Setor.")
+                            
+                st.write("**Lista de Responsáveis Atuais**")
+                df_proj_view = pd.read_sql_query("SELECT id, nome as \"Responsável\", especialidade as \"Setor\" FROM projetistas ORDER BY nome", engine)
+                st.dataframe(df_proj_view, width="stretch", hide_index=True)
             
             elif cat_manut == "Férias":
                 c_f1, c_f2 = st.columns([1, 2])
