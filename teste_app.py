@@ -2727,7 +2727,23 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
         st.markdown("### 📈 Análise de Ciclo de Vida do Projeto (Timeline)")
         st.write("Visão consolidada por **Projeto (SO)**: fluxo de entregas, marcos logísticos com pins arredondados e ocorrências de Perdas (Retrabalhos e Paradas).")
         
-        df_so_timeline = pd.read_sql_query("SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL", engine)
+        # --- ATUALIZADO: Filtro Inteligente (Abertos ou Finalizados há < 30 dias) ---
+        df_so_timeline = pd.read_sql_query("""
+            SELECT DISTINCT p.so, p.customer 
+            FROM projetos p
+            LEFT JOIN (
+                SELECT wo, MAX(data_fim) as ultima_mov
+                FROM kanban_fases
+                GROUP BY wo
+            ) k ON p.wo = k.wo
+            WHERE p.so IS NOT NULL AND TRIM(p.so) != ''
+            AND (
+                UPPER(TRIM(p.status_producao)) != 'FINALIZADO' 
+                OR p.status_producao IS NULL
+                OR k.ultima_mov >= CURRENT_DATE - INTERVAL '30 days'
+            )
+        """, engine)
+        # ----------------------------------------------------------------------------
         
         if not df_so_timeline.empty:
             lista_sos_tl = [f"{r['so']} - {r['customer'] if pd.notna(r['customer']) else ''}" for _, r in df_so_timeline.iterrows()]
