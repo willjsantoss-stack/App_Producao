@@ -886,12 +886,12 @@ if menu_selecionado == "📝 Lançamentos":
                 st.info("👈 Selecione um operador à esquerda para visualizar sua auditoria.")
 
         # ==========================================
-        # PAINEL DE GESTÃO DE APONTAMENTOS (Atualizado com Erro e Causador)
+        # PAINEL DE GESTÃO DE APONTAMENTOS (Universal para Todos os Tipos)
         # ==========================================
         st.markdown("---")
         st.markdown("### 🛠️ Gerenciar / Corrigir Apontamentos")
-        with st.expander("Clique aqui para corrigir horários, descrições ou classificações de erro", expanded=False):
-            st.caption("Dica: Selecione o apontamento abaixo para atualizar horários, justificativas, tipo de erro ou causador sem precisar recriar o lançamento.")
+        with st.expander("Clique aqui para corrigir horários, descrições ou classificações", expanded=False):
+            st.caption("Dica: Selecione o apontamento abaixo para atualizar horários, categorias de parada, erros, causadores ou observações.")
             data_edit = st.date_input("1. Selecione a data do apontamento:", date.today(), format="DD/MM/YYYY", key="data_edit_apont")
             data_br_edit = data_edit.strftime("%d/%m/%Y")
             
@@ -923,7 +923,12 @@ if menu_selecionado == "📝 Lançamentos":
                         hi_edit = c_e1.time_input("Nova Hora de Início", value=hi_edit_val, step=60, key="hi_edit")
                         hf_edit = c_e2.time_input("Nova Hora de Fim", value=hf_edit_val, step=60, key="hf_edit")
                         
-                        # --- NOVOS CAMPOS PARA EDITAR ERRO E CAUSADOR (Especialmente útil para Retrabalhos) ---
+                        # Variáveis auxiliares para alteração
+                        novo_tipo_erro = row_apont['tipo_erro']
+                        novo_causador = row_apont['causador_erro']
+                        nova_atividade = row_apont['atividade']
+                        
+                        # --- TRATAMENTO INTELIGENTE CONFORME O TIPO DE APONTAMENTO ---
                         if row_apont['tipo'] == 'Retrabalho':
                             df_erros_ed = pd.read_sql_query("SELECT erro FROM tipos_erro", engine)
                             df_causadores_ed = pd.read_sql_query("SELECT causador FROM causadores_erro", engine)
@@ -931,17 +936,20 @@ if menu_selecionado == "📝 Lançamentos":
                             lista_erros_db = df_erros_ed['erro'].tolist() if not df_erros_ed.empty else ["Nenhum cadastrado"]
                             lista_caus_db = df_causadores_ed['causador'].tolist() if not df_causadores_ed.empty else ["Nenhum cadastrado"]
                             
-                            # Define o índice atual do banco para já vir selecionado corretamente
                             idx_err = lista_erros_db.index(row_apont['tipo_erro']) if row_apont['tipo_erro'] in lista_erros_db else 0
                             idx_cau = lista_caus_db.index(row_apont['causador_erro']) if row_apont['causador_erro'] in lista_caus_db else 0
                             
                             ce_err, ce_cau = st.columns(2)
                             novo_tipo_erro = ce_err.selectbox("Editar Tipo de Erro", lista_erros_db, index=idx_err, key="edit_tipo_erro")
                             novo_causador = ce_cau.selectbox("Editar Causador", lista_caus_db, index=idx_cau, key="edit_causador")
-                        else:
-                            novo_tipo_erro = row_apont['tipo_erro']
-                            novo_causador = row_apont['causador_erro']
-                        # ---------------------------------------------------------------------------------------
+                            
+                        elif row_apont['tipo'] == 'Parada':
+                            df_paradas_ed = pd.read_sql_query("SELECT categoria FROM categorias_parada", engine)
+                            lista_paradas_db = df_paradas_ed['categoria'].tolist() if not df_paradas_ed.empty else ["Nenhuma cadastrada"]
+                            
+                            idx_par = lista_paradas_db.index(row_apont['atividade']) if row_apont['atividade'] in lista_paradas_db else 0
+                            nova_atividade = st.selectbox("Editar Categoria da Parada", lista_paradas_db, index=idx_par, key="edit_cat_parada")
+                        # -------------------------------------------------------------
 
                         desc_atual = row_apont['descricao'] if pd.notna(row_apont['descricao']) else ""
                         nova_obs = st.text_area("Editar Observação / Descrição", value=desc_atual, key="obs_edit_apont")
@@ -949,15 +957,15 @@ if menu_selecionado == "📝 Lançamentos":
                         st.write("")
                         c_btn_e1, c_btn_e2 = st.columns([1, 1])
                         
-                        if c_btn_e1.button("💾 Salvar Alterações (Horário/Erro/Obs)", type="primary", use_container_width=True):
-                            # Atualiza a Query SQL incluindo o Tipo de Erro e o Causador
+                        if c_btn_e1.button("💾 Salvar Alterações", type="primary", use_container_width=True):
+                            # Atualiza a Query gravando todas as variações possíveis (Erros, Causadores, Paradas e Observações)
                             cursor.execute(
-                                "UPDATE apontamentos SET hora_inicio=%s, hora_fim=%s, descricao=%s, tipo_erro=%s, causador_erro=%s WHERE id=%s", 
-                                (str(hi_edit), str(hf_edit), nova_obs, novo_tipo_erro, novo_causador, id_apont)
+                                "UPDATE apontamentos SET hora_inicio=%s, hora_fim=%s, descricao=%s, tipo_erro=%s, causador_erro=%s, atividade=%s WHERE id=%s", 
+                                (str(hi_edit), str(hf_edit), nova_obs, novo_tipo_erro, novo_causador, nova_atividade, id_apont)
                             )
                             conn.commit()
                             recalcular_dia(conn, row_apont['matricula'], data_br_edit)
-                            st.success("✔️ Apontamento, Erro e Causador atualizados com sucesso!")
+                            st.success("✔️ Apontamento atualizado com sucesso!")
                             time_sys.sleep(1.5)
                             st.rerun()
                             
