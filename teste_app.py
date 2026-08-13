@@ -2581,129 +2581,132 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
         # QUADRO 2: FÁBRICA (Orientado a WO, Status Global e Fluxo)
         # ---------------------------------------------------------
         with tab_board_fab:
-            col_b1, col_b2 = st.columns(2)
-            
-            with col_b1:
-                with st.container(border=True):
-                    st.markdown("#### 📦 Backlog: Puxar WO Não Iniciada")
-                    st.caption("Ordens de Produção criadas aguardando início.")
-                    df_backlog = pd.read_sql_query("SELECT wo, product_name FROM projetos WHERE status_producao = 'Não iniciada'", engine)
-                    if not df_backlog.empty:
-                        wo_pull = st.selectbox("Ordem de Produção (WO):", df_backlog['wo'].tolist(), key="wo_pull_fab")
-                        fase_pull = st.selectbox("Fase Inicial:", fases_fab, key="fase_pull_fab")
-                        resp_pull = st.selectbox("Responsável:", lista_responsaveis, key="resp_pull_fab")
-                        
-                        if st.button("🚀 Iniciar Produção da WO", type="primary", use_container_width=True):
-                            resp_limpo = resp_pull.split(" (")[0] if resp_pull != "Equipe de Fábrica" else "Equipe Fábrica"
-                            
-                            # 1. Cria o cartão no Kanban
-                            cursor.execute("INSERT INTO kanban_fases (wo, categoria, fase, responsavel, data_inicio, status) VALUES (%s, 'Fábrica', %s, %s, NOW(), 'Em Andamento')", (wo_pull, fase_pull, resp_limpo))
-                            # 2. Atualiza o status global da WO
-                            cursor.execute("UPDATE projetos SET status_producao = 'Em Montagem' WHERE wo = %s", (wo_pull,))
-                            conn.commit()
-                            
-                            st.success(f"WO {wo_pull} entrou em montagem!")
-                            time_sys.sleep(1); st.rerun()
+            with st.expander("🚀 Iniciar, Reabrir ou Criar Cartão de Fábrica", expanded=False):
+                tipo_cartao = st.radio("Tipo de Cartão:", ["Vinculado a Projeto (SO/WO)", "Atividade Avulsa (Genérica)"], horizontal=True)
+                
+                if tipo_cartao == "Vinculado a Projeto (SO/WO)":
+                    col_f1, col_f2, col_f3 = st.columns(3)
+                    
+                    # 1. Seletor de SO
+                    df_sos_fab = pd.read_sql_query("SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL AND TRIM(so) != ''", engine)
+                    lista_sos_fab = ["- Selecione o Projeto -"] + [f"{r['so']} - {r['customer'] if pd.notna(r['customer']) else 'Sem Cliente'}" for _, r in df_sos_fab.iterrows()]
+                    so_fab_sel = col_f1.selectbox("1. Projeto (SO):", lista_sos_fab, key="so_fab_sel_k")
+                    
+                    # 2. Seletor de WO baseado na SO
+                    if so_fab_sel != "- Selecione o Projeto -":
+                        so_clean_fab = so_fab_sel.split(" - ")[0].strip()
+                        df_wos_fab = pd.read_sql_query(f"SELECT wo, product_name, status_producao FROM projetos WHERE so = '{so_clean_fab}'", engine)
+                        lista_wos_fab = ["- Selecione a WO -"] + [f"{r['wo']} - {r['product_name']} ({r['status_producao']})" for _, r in df_wos_fab.iterrows()]
                     else:
-                        st.info("Nenhuma ordem 'Não iniciada' no momento.")
-
-            with col_b2:
-                with st.container(border=True):
-                    st.markdown("#### ➕ Cartão Avulso / Reabrir WO")
-                    st.caption("Para atividades gerais (embalagem), retrabalhos ou reabrir uma ordem.")
+                        lista_wos_fab = ["- Aguardando Projeto -"]
+                        so_clean_fab = None
+                        
+                    wo_fab_sel = col_f2.selectbox("2. Ordem de Produção (WO):", lista_wos_fab, key="wo_fab_sel_k")
                     
-                    df_todas_wos = pd.read_sql_query("SELECT wo FROM projetos", engine)
-                    lista_wos_all = ["- Genérica / Sem WO -"] + df_todas_wos['wo'].tolist()
+                    # 3. Fase Inicial / Destino
+                    fase_fab_sel = col_f3.selectbox("3. Fase do Setor:", ["- Selecione -"] + fases_fab, key="fase_fab_start_k")
                     
-                    wo_avulsa_sel = st.selectbox("Vincular à WO (Opcional):", lista_wos_all, key="wo_avulsa_sel")
-                    wo_avulsa_txt = st.text_input("Ou digite uma Identificação Genérica:", key="wo_avulsa_txt")
-                    
-                    fase_avulsa = st.selectbox("Fase do Cartão:", fases_fab, key="fase_avulsa_fab")
-                    resp_avulso = st.selectbox("Responsável:", lista_responsaveis, key="resp_avulsa_fab")
-                    
-                    if st.button("📝 Criar Cartão Avulso", use_container_width=True):
-                        wo_final_avulsa = wo_avulsa_txt.strip() if wo_avulsa_sel == "- Genérica / Sem WO -" else wo_avulsa_sel
-                        if not wo_final_avulsa:
-                            st.error("Informe a WO ou digite uma identificação.")
-                        else:
-                            resp_limpo = resp_avulso.split(" (")[0] if resp_avulso != "Equipe de Fábrica" else "Equipe Fábrica"
-                            cursor.execute("INSERT INTO kanban_fases (wo, categoria, fase, responsavel, data_inicio, status) VALUES (%s, 'Fábrica', %s, %s, NOW(), 'Em Andamento')", (wo_final_avulsa, fase_avulsa, resp_limpo))
+                    if st.button("🚀 Iniciar / Reabrir WO no Kanban", type="primary", use_container_width=True):
+                        if so_fab_sel != "- Selecione o Projeto -" and wo_fab_sel != "- Selecione a WO -" and wo_fab_sel != "- Aguardando Projeto -" and fase_fab_sel != "- Selecione -":
+                            wo_clean_fab = wo_fab_sel.split(" - ")[0].strip()
                             
-                            # Se for uma WO válida, reabre ela garantindo que fica 'Em Montagem'
-                            if wo_avulsa_sel != "- Genérica / Sem WO -":
-                                cursor.execute("UPDATE projetos SET status_producao = 'Em Montagem' WHERE wo = %s", (wo_final_avulsa,))
-                                
+                            # Inserir o cartão com a SO e a WO, assumindo a fábrica como responsável geral
+                            cursor.execute("""
+                                INSERT INTO kanban_fases (so, wo, categoria, fase, responsavel, data_inicio, status)
+                                VALUES (%s, %s, 'Fábrica', %s, 'Equipe de Fábrica', NOW(), 'Em Andamento')
+                            """, (so_clean_fab, wo_clean_fab, fase_fab_sel))
+                            
+                            # Atualiza status global da WO para 'Em Montagem'
+                            cursor.execute("UPDATE projetos SET status_producao = 'Em Montagem' WHERE wo = %s", (wo_clean_fab,))
                             conn.commit()
-                            st.success("Cartão criado com sucesso!")
-                            time_sys.sleep(1); st.rerun()
+                            
+                            st.success(f"✔️ Cartão de {fase_fab_sel} criado para a WO {wo_clean_fab}!")
+                            time_sys.sleep(1.5); st.rerun()
+                        else:
+                            st.error("Preencha todos os campos para iniciar.")
+                            
+                else: # Atividade Avulsa (Genérica)
+                    col_a1, col_a2 = st.columns(2)
+                    wo_avulsa_txt = col_a1.text_input("Identificação (Ex: Lote Embalagem 01):", key="wo_avulsa_txt")
+                    fase_avulsa_sel = col_a2.selectbox("Fase do Setor:", ["- Selecione -"] + fases_fab, key="fase_avulsa_start_k")
+                    
+                    if st.button("📝 Criar Cartão Avulso", type="primary", use_container_width=True):
+                        if wo_avulsa_txt.strip() and fase_avulsa_sel != "- Selecione -":
+                            cursor.execute("""
+                                INSERT INTO kanban_fases (so, wo, categoria, fase, responsavel, data_inicio, status)
+                                VALUES ('AVULSO', %s, 'Fábrica', %s, 'Equipe de Fábrica', NOW(), 'Em Andamento')
+                            """, (wo_avulsa_txt.strip(), fase_avulsa_sel))
+                            conn.commit()
+                            st.success("Cartão avulso criado com sucesso!")
+                            time_sys.sleep(1.5); st.rerun()
+                        else:
+                            st.error("Preencha a identificação e a fase.")
 
             st.markdown("---")
             
-            df_kanban_fab = pd.read_sql_query("""
-                SELECT k.id, k.wo, k.fase, k.responsavel, k.data_inicio, 
-                       p_wo.product_name as wo_product, p_wo.status_producao as wo_status
-                FROM kanban_fases k
-                LEFT JOIN (SELECT DISTINCT wo, product_name, status_producao FROM projetos WHERE wo IS NOT NULL) p_wo ON k.wo = p_wo.wo
-                WHERE k.data_fim IS NULL AND k.status = 'Em Andamento' AND k.categoria = 'Fábrica'
-            """, engine)
-
+            # --- Atualizar visualização dos cards de Fábrica ---
             cols_fab = st.columns(len(fases_fab))
             for i, fase_nome in enumerate(fases_fab):
                 with cols_fab[i]:
                     st.markdown(f"<div style='text-align: center; background-color: #28a745; color: white; padding: 5px; border-radius: 5px; margin-bottom: 10px; font-weight: bold; font-size: 14px;'>{fase_nome}</div>", unsafe_allow_html=True)
                     
-                    df_fase = df_kanban_fab[df_kanban_fab['fase'] == fase_nome]
+                    df_fase = df_kanban_atual[(df_kanban_atual['fase'] == fase_nome) & (df_kanban_atual['categoria'] == 'Fábrica')]
                     for _, row in df_fase.iterrows():
                         with st.container(border=True):
-                            st.markdown(f"<h5 style='margin-bottom:0px; color:#28a745;'>{row['wo']}</h5>", unsafe_allow_html=True)
+                            st.markdown(f"<h5 style='margin-bottom:0px; color:#28a745;'>WO: {row['wo']}</h5>", unsafe_allow_html=True)
                             
-                            # Badge de Status Global atrelado à WO
-                            if pd.notna(row['wo_status']):
-                                cor_badge = "#6c757d"
-                                if row['wo_status'] == 'Em Montagem': cor_badge = "#004a99"
-                                elif row['wo_status'] == 'Parado (Material)': cor_badge = "#dc3545"
-                                st.markdown(f"<span style='background-color:{cor_badge}; color:white; padding: 2px 6px; border-radius: 4px; font-size:10px;'>Status WO: {row['wo_status']}</span>", unsafe_allow_html=True)
+                            # Mostra a SO (Projeto) diretamente no cartão da fábrica
+                            if row['so'] and row['so'] != 'AVULSO':
+                                st.markdown(f"**Projeto (SO):** {row['so']}")
                             
                             prod_nome = row['wo_product'] if pd.notna(row['wo_product']) else "Atividade Avulsa"
                             st.caption(f"{prod_nome}")
                             d_ini = pd.to_datetime(row['data_inicio']).strftime('%d/%m %H:%M')
-                            st.caption(f"⏳ Desde: {d_ini}")
+                            st.caption(f"⏳ Em execução desde: {d_ini}")
                             
                             # INTERAÇÃO DIRETA NO CARD
-                            opcoes_acao = ["- Ação -", "Mover para Próxima Fase", "⏸️ Reportar Parada (Falta Mat.)", "▶️ Retomar Produção", "✅ Concluir Etapa", "🏁 Finalizar WO (Encerrar)"]
-                            acao = st.selectbox("Ação:", opcoes_acao, key=f"acao_{row['id']}", label_visibility="collapsed")
+                            opcoes_acao = ["- Ação do Cartão -", "Mover para Próxima Fase", "⏸️ Reportar Parada (Falta Mat.)", "▶️ Retomar Produção", "✅ Concluir Etapa", "🏁 Finalizar WO (Encerrar)"]
+                            acao = st.selectbox("Selecione:", opcoes_acao, key=f"acao_{row['id']}", label_visibility="collapsed")
                             
                             if acao == "Mover para Próxima Fase":
-                                dest = st.selectbox("Destino:", fases_fab, key=f"dest_{row['id']}")
+                                dest = st.selectbox("Mover para:", fases_fab, key=f"dest_{row['id']}")
                                 if st.button("Mover", key=f"btn_mov_{row['id']}", use_container_width=True):
                                     cursor.execute("UPDATE kanban_fases SET data_fim = NOW(), status = 'Concluído' WHERE id = %s", (row['id'],))
-                                    cursor.execute("INSERT INTO kanban_fases (wo, categoria, fase, responsavel, data_inicio, status) VALUES (%s, 'Fábrica', %s, %s, NOW(), 'Em Andamento')", (row['wo'], dest, row['responsavel']))
-                                    cursor.execute("UPDATE projetos SET status_producao = 'Em Montagem' WHERE wo = %s", (row['wo'],))
+                                    
+                                    # Carrega a SO no novo cartão para manter o histórico
+                                    so_val = row['so'] if pd.notna(row['so']) else 'AVULSO'
+                                    cursor.execute("INSERT INTO kanban_fases (so, wo, categoria, fase, responsavel, data_inicio, status) VALUES (%s, %s, 'Fábrica', %s, 'Equipe de Fábrica', NOW(), 'Em Andamento')", (so_val, row['wo'], dest))
+                                    
+                                    if so_val != 'AVULSO':
+                                        cursor.execute("UPDATE projetos SET status_producao = 'Em Montagem' WHERE wo = %s", (row['wo'],))
                                     conn.commit()
                                     st.rerun()
                                     
                             elif acao == "⏸️ Reportar Parada (Falta Mat.)":
-                                if st.button("Confirmar Parada", key=f"btn_par_{row['id']}", use_container_width=True):
-                                    cursor.execute("UPDATE projetos SET status_producao = 'Parado (Material)' WHERE wo = %s", (row['wo'],))
-                                    conn.commit()
+                                if st.button("Sinalizar Parada", key=f"btn_par_{row['id']}", use_container_width=True):
+                                    if row['so'] != 'AVULSO':
+                                        cursor.execute("UPDATE projetos SET status_producao = 'Parado (Material)' WHERE wo = %s", (row['wo'],))
+                                        conn.commit()
                                     st.rerun()
                                     
                             elif acao == "▶️ Retomar Produção":
-                                if st.button("Retomar", key=f"btn_ret_{row['id']}", use_container_width=True):
-                                    cursor.execute("UPDATE projetos SET status_producao = 'Em Montagem' WHERE wo = %s", (row['wo'],))
-                                    conn.commit()
+                                if st.button("Tirar do Status Parado", key=f"btn_ret_{row['id']}", use_container_width=True):
+                                    if row['so'] != 'AVULSO':
+                                        cursor.execute("UPDATE projetos SET status_producao = 'Em Montagem' WHERE wo = %s", (row['wo'],))
+                                        conn.commit()
                                     st.rerun()
                                     
                             elif acao == "✅ Concluir Etapa":
-                                if st.button("Tirar do Quadro", key=f"btn_conc_{row['id']}", use_container_width=True):
+                                if st.button("Tirar do Quadro Kanban", key=f"btn_conc_{row['id']}", use_container_width=True):
                                     cursor.execute("UPDATE kanban_fases SET data_fim = NOW(), status = 'Concluído' WHERE id = %s", (row['id'],))
                                     conn.commit()
                                     st.rerun()
                                     
                             elif acao == "🏁 Finalizar WO (Encerrar)":
-                                if st.button("Encerrar WO", key=f"btn_fin_{row['id']}", type="primary", use_container_width=True):
+                                if st.button("Encerrar WO Definitivo", key=f"btn_fin_{row['id']}", type="primary", use_container_width=True):
                                     cursor.execute("UPDATE kanban_fases SET data_fim = NOW(), status = 'Concluído' WHERE id = %s", (row['id'],))
-                                    cursor.execute("UPDATE projetos SET status_producao = 'Finalizado' WHERE wo = %s", (row['wo'],))
+                                    if row['so'] != 'AVULSO':
+                                        cursor.execute("UPDATE projetos SET status_producao = 'Finalizado' WHERE wo = %s", (row['wo'],))
                                     conn.commit()
                                     st.rerun()
 
