@@ -2644,13 +2644,23 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
 
             st.markdown("---")
             
+            # --- CONSULTA DOS CARTÕES DA FÁBRICA (Correção do Erro) ---
+            df_kanban_fab = pd.read_sql_query("""
+                SELECT k.id, k.so, k.wo, k.fase, k.responsavel, k.data_inicio, 
+                       p_wo.product_name as wo_product, p_wo.status_producao as wo_status
+                FROM kanban_fases k
+                LEFT JOIN (SELECT DISTINCT wo, product_name, status_producao FROM projetos WHERE wo IS NOT NULL) p_wo ON k.wo = p_wo.wo
+                WHERE k.data_fim IS NULL AND k.status = 'Em Andamento' AND k.categoria = 'Fábrica'
+            """, engine)
+            
             # --- Atualizar visualização dos cards de Fábrica ---
             cols_fab = st.columns(len(fases_fab))
             for i, fase_nome in enumerate(fases_fab):
                 with cols_fab[i]:
                     st.markdown(f"<div style='text-align: center; background-color: #28a745; color: white; padding: 5px; border-radius: 5px; margin-bottom: 10px; font-weight: bold; font-size: 14px;'>{fase_nome}</div>", unsafe_allow_html=True)
                     
-                    df_fase = df_kanban_atual[(df_kanban_atual['fase'] == fase_nome) & (df_kanban_atual['categoria'] == 'Fábrica')]
+                    # Agora usamos a variável correta df_kanban_fab
+                    df_fase = df_kanban_fab[df_kanban_fab['fase'] == fase_nome]
                     for _, row in df_fase.iterrows():
                         with st.container(border=True):
                             st.markdown(f"<h5 style='margin-bottom:0px; color:#28a745;'>WO: {row['wo']}</h5>", unsafe_allow_html=True)
