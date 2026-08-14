@@ -1278,43 +1278,25 @@ elif menu_selecionado == "👥 Dash. RH":
     else:
         st.markdown("## 👥 Painel de Recursos Humanos")
         
-        st.markdown("### 🏦 Passivo de Banco de Horas (Saldo Consolidado)")
-        st.write("Visão financeira das horas: Negativo (Deve para a empresa) | Positivo (Crédito do funcionário).")
-        
-        df_bh_total = pd.read_sql_query("""
-            SELECT a.operador, c.linha, SUM(a.saldo_bh) as saldo_total
-            FROM apontamentos a
-            JOIN colaboradores c ON a.matricula = c.matricula
-            WHERE c.data_demissao IS NULL OR c.data_demissao = ''
-            GROUP BY a.operador, c.linha
-            ORDER BY saldo_total DESC
-        """, engine)
-        
-        if not df_bh_total.empty:
-            df_bh_total['cor'] = df_bh_total['saldo_total'].apply(lambda x: '#28a745' if x >= 0 else '#dc3545')
-            
-            fig_bh = go.Figure()
-            fig_bh.add_trace(go.Bar(
-                x=df_bh_total['operador'], 
-                y=df_bh_total['saldo_total'], 
-                marker_color=df_bh_total['cor'],
-                text=df_bh_total['saldo_total'].round(2).astype(str) + "h",
-                textposition='auto'
-            ))
-            fig_bh.update_layout(title="Saldo Histórico de Banco de Horas por Colaborador Ativo", yaxis_title="Horas (h)", height=350, margin=dict(t=40, b=10))
-            st.plotly_chart(fig_bh, width="stretch", key="bar_banco_horas_rh")
-        else:
-            st.info("Não há saldo de banco de horas registrado.")
-        
-        st.markdown("---")
-        
         st.markdown("### 🕒 Acompanhamento Diário de Ponto (Saldo de Horas)")
         
         df_lucy_check_rh = pd.read_sql_query("SELECT lucy_month, MIN(start_date) as start_date, MAX(end_date) as end_date FROM calendario_lucy GROUP BY lucy_month ORDER BY MIN(start_date) DESC", engine)
         
         if not df_lucy_check_rh.empty and df_lucy_check_rh['lucy_month'].iloc[0] is not None:
             meses_lucy = [f"{r['lucy_month']} (De {pd.to_datetime(r['start_date']).strftime('%d/%m/%Y')} a {pd.to_datetime(r['end_date']).strftime('%d/%m/%Y')})" for _, r in df_lucy_check_rh.iterrows()]
-            mes_escolhido_rh = st.selectbox("Selecione o Mês Fiscal Lucy:", meses_lucy)
+            
+            # --- NOVO: Lógica para encontrar o índice do mês atual ---
+            hoje_data = date.today()
+            idx_atual = 0
+            for i, r in df_lucy_check_rh.iterrows():
+                d_ini = pd.to_datetime(r['start_date']).date()
+                d_fim = pd.to_datetime(r['end_date']).date()
+                if d_ini <= hoje_data <= d_fim:
+                    idx_atual = i
+                    break
+            # ---------------------------------------------------------
+            
+            mes_escolhido_rh = st.selectbox("Selecione o Mês Fiscal Lucy:", meses_lucy, index=idx_atual)
             idx_sel = meses_lucy.index(mes_escolhido_rh)
             data_ini_rh = pd.to_datetime(df_lucy_check_rh['start_date'].iloc[idx_sel]).date()
             data_fim_rh = pd.to_datetime(df_lucy_check_rh['end_date'].iloc[idx_sel]).date()
@@ -1458,30 +1440,36 @@ elif menu_selecionado == "👥 Dash. RH":
         
         df_carga = pd.DataFrame(dados_carga_rh)
         
-        if not df_ap_rh.empty and not df_carga.empty:
-            def calc_normais(r):
-                val = r['horas_normais'] if r['tipo'] in ['Produção Normal', 'Retrabalho'] else 0
-                if val == 0 and r['tipo'] in ['Produção Normal', 'Retrabalho'] and pd.notna(r['saldo_bh']) and r['saldo_bh'] > 0:
-                    val = r['saldo_bh']
-                return val
+        # Alterado: Só exige que a tabela de carga (colaboradores) exista
+        if not df_carga.empty:
+            if not df_ap_rh.empty:
+                def calc_normais(r):
+                    val = r['horas_normais'] if r['tipo'] in ['Produção Normal', 'Retrabalho'] else 0
+                    if val == 0 and r['tipo'] in ['Produção Normal', 'Retrabalho'] and pd.notna(r['saldo_bh']) and r['saldo_bh'] > 0:
+                        val = r['saldo_bh']
+                    return val
 
-            def calc_bh(r):
-                if r['tipo'] in ['Falta/Atraso', 'Atestado / Justificada'] and pd.notna(r['atividade']) and 'Banco de Horas' in str(r['atividade']):
-                    if r['horas_normais'] > 0:
-                        return r['horas_normais']
-                    elif pd.notna(r['saldo_bh']) and r['saldo_bh'] < 0:
-                        return abs(r['saldo_bh'])
-                return 0
+                def calc_bh(r):
+                    if r['tipo'] in ['Falta/Atraso', 'Atestado / Justificada'] and pd.notna(r['atividade']) and 'Banco de Horas' in str(r['atividade']):
+                        if r['horas_normais'] > 0:
+                            return r['horas_normais']
+                        elif pd.notna(r['saldo_bh']) and r['saldo_bh'] < 0:
+                            return abs(r['saldo_bh'])
+                    return 0
 
-            df_ap_rh['h_normais'] = df_ap_rh.apply(calc_normais, axis=1)
-            df_ap_rh['paradas'] = df_ap_rh.apply(lambda r: r['horas_normais'] if r['tipo'] == 'Parada' else 0, axis=1)
-            df_ap_rh['atestados'] = df_ap_rh.apply(lambda r: r['horas_normais'] if r['tipo'] in ['Atestado / Justificada', 'Falta/Atraso'] and ('Banco de Horas' not in str(r['atividade'])) else 0, axis=1)
-            df_ap_rh['banco_horas'] = df_ap_rh.apply(calc_bh, axis=1)
-            df_ap_rh['he50'] = df_ap_rh['he_50']
-            df_ap_rh['he100'] = df_ap_rh['he_100']
+                df_ap_rh['h_normais'] = df_ap_rh.apply(calc_normais, axis=1)
+                df_ap_rh['paradas'] = df_ap_rh.apply(lambda r: r['horas_normais'] if r['tipo'] == 'Parada' else 0, axis=1)
+                df_ap_rh['atestados'] = df_ap_rh.apply(lambda r: r['horas_normais'] if r['tipo'] in ['Atestado / Justificada', 'Falta/Atraso'] and ('Banco de Horas' not in str(r['atividade'])) else 0, axis=1)
+                df_ap_rh['banco_horas'] = df_ap_rh.apply(calc_bh, axis=1)
+                df_ap_rh['he50'] = df_ap_rh['he_50']
+                df_ap_rh['he100'] = df_ap_rh['he_100']
+                
+                df_consumo_op = df_ap_rh.groupby('operador')[['h_normais', 'paradas', 'atestados', 'banco_horas', 'he50', 'he100']].sum().reset_index()
+            else:
+                # NOVO: Se não houver apontamentos, cria estrutura zerada para mesclar
+                df_consumo_op = pd.DataFrame(columns=['operador', 'h_normais', 'paradas', 'atestados', 'banco_horas', 'he50', 'he100'])
             
-            df_consumo_op = df_ap_rh.groupby('operador')[['h_normais', 'paradas', 'atestados', 'banco_horas', 'he50', 'he100']].sum().reset_index()
-            df_consumo_op['total_apontado'] = df_consumo_op[['h_normais', 'paradas', 'atestados', 'banco_horas', 'he50', 'he100']].sum(axis=1)
+            df_consumo_op['total_apontado'] = df_consumo_op[['h_normais', 'paradas', 'atestados', 'banco_horas', 'he50', 'he100']].sum(axis=1) if not df_consumo_op.empty else 0
             
             df_plot_carga = pd.merge(df_carga, df_consumo_op, on='operador', how='left').fillna(0)
             df_plot_carga = df_plot_carga.sort_values(by='total_apontado', ascending=False)
