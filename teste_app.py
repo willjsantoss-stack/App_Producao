@@ -523,11 +523,11 @@ menu_selecionado = st.radio(
     "Navegação", 
     [
         "📝 Lançamentos", 
-        "🗂️ Kanban & Timeline", # <-- Movido para ser o segundo item!
-        "📊 Dash. Projetos", 
-        "👥 Dash. RH",
+        "🗂️ Kanban & Timeline",
         "📋 Ordens de Produção",
         "📅 Planejamento de Carga",
+        "📊 Dash. Projetos", 
+        "👥 Dash. RH",
         "🔍 Manutenção", 
         "📑 Relatórios PDF"
     ],
@@ -1942,9 +1942,21 @@ elif menu_selecionado == "📅 Planejamento de Carga":
     
     if not df_lucy_gantt_check.empty and df_lucy_gantt_check['lucy_month'].iloc[0] is not None:
         meses_gantt_list = [f"{r['lucy_month']} (De {pd.to_datetime(r['start_date']).strftime('%d/%m/%Y')} a {pd.to_datetime(r['end_date']).strftime('%d/%m/%Y')})" for _, r in df_lucy_gantt_check.iterrows()]
+        
+        # --- NOVO: Lógica para encontrar o mês atual ---
+        hoje_data = date.today()
+        idx_mes_atual = 1 # O índice 0 será o "Ver Tudo", então começamos no 1
+        for i, r in df_lucy_gantt_check.iterrows():
+            d_ini = pd.to_datetime(r['start_date']).date()
+            d_fim = pd.to_datetime(r['end_date']).date()
+            if d_ini <= hoje_data <= d_fim:
+                idx_mes_atual = i + 1 
+                break
+        # ----------------------------------------------
+        
         col_fil_g1, col_fil_g2 = st.columns(2)
         with col_fil_g1:
-            mes_gantt_sel = st.selectbox("Filtrar Período do Cronograma:", ["Ver Tudo"] + meses_gantt_list, key="sb_gantt_mes")
+            mes_gantt_sel = st.selectbox("Filtrar Período do Cronograma:", ["Ver Tudo"] + meses_gantt_list, index=idx_mes_atual, key="sb_gantt_mes")
         
         if mes_gantt_sel != "Ver Tudo":
             idx_g = meses_gantt_list.index(mes_gantt_sel)
@@ -2190,13 +2202,27 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                 width="stretch"
             )
             
-        st.markdown("---")
+    else:
+        # --- NOVO: Desenha um gráfico vazio se não houver planejamento ---
+        fig_gantt_vazio = go.Figure()
+        fig_gantt_vazio.update_layout(
+            title="Gantt Avançado Lucy Group (Sem planejamento no período)",
+            xaxis_title="Período Cronograma (Dias)",
+            yaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
+            height=200,
+            margin=dict(l=10, r=20, t=40, b=20),
+            plot_bgcolor="#f5f7f9"
+        )
+        st.plotly_chart(fig_gantt_vazio, use_container_width=True, key="chart_gantt_vazio")
+        st.info("Nenhuma alocação ou apontamento de horas encontrado para o mês/filtro selecionado.")
         
-        # ⚖️ BALANÇO DE CAPACIDADE VS DEMANDA
-        st.markdown("### ⚖️ Balanço de Capacidade vs. Demanda (Ocupação do Período)")
-        st.write("Visão estratégica para tomada de decisão: Aprovação de Horas Extras vs. Liberação de Banco de Horas.")
+    st.markdown("---")
+
+    # ⚖️ BALANÇO DE CAPACIDADE VS DEMANDA
+    st.markdown("### ⚖️ Balanço de Capacidade vs. Demanda (Ocupação do Período)")
+    st.write("Visão estratégica para tomada de decisão: Aprovação de Horas Extras vs. Liberação de Banco de Horas.")
         
-        if 'data_ini_gantt' in locals() and data_ini_gantt:
+    if 'data_ini_gantt' in locals() and data_ini_gantt:
             dt_start_cap = pd.to_datetime(data_ini_gantt).date()
             if 'data_fim_gantt' in locals() and data_fim_gantt:
                 dt_end_cap = pd.to_datetime(data_fim_gantt).date()
@@ -2306,26 +2332,26 @@ elif menu_selecionado == "📅 Planejamento de Carga":
             fig_bal.update_layout(barmode='group', title="Gargalos e Ociosidade por Setor", yaxis_title="Horas", height=350, margin=dict(t=30, b=10))
             st.plotly_chart(fig_bal, width="stretch", key="bar_balanco_capacidade")
             
-        else:
+    else:
             st.info("Selecione um período no filtro do Gantt para visualizar o balanço de capacidade.")
 
-        st.markdown("---")
+    st.markdown("---")
         
         # 🎯 QUADRO DE ADERÊNCIA OPERACIONAL
-        st.markdown("### 🎯 Quadro de Aderência Operacional: Capacidade vs Planejado vs Realizado")
-        st.write("Visão consolidada cruzando a meta de carga do sistema com os apontamentos reais de produção na fábrica.")
+    st.markdown("### 🎯 Quadro de Aderência Operacional: Capacidade vs Planejado vs Realizado")
+    st.write("Visão consolidada cruzando a meta de carga do sistema com os apontamentos reais de produção na fábrica.")
         
-        if 'data_ini_gantt' in locals() and data_ini_gantt:
+    if 'data_ini_gantt' in locals() and data_ini_gantt:
             if 'data_fim_gantt' in locals() and data_fim_gantt:
                 df_plan_rel = pd.read_sql_query(f"SELECT data_planejada, matricula, wo, unidade, horas_planejadas FROM planejamento WHERE data_planejada BETWEEN '{data_ini_gantt}' AND '{data_fim_gantt}'", engine)
             else:
                 df_plan_rel = pd.read_sql_query(f"SELECT data_planejada, matricula, wo, unidade, horas_planejadas FROM planejamento WHERE data_planejada >= '{data_ini_gantt}'", engine)
-        else:
+    else:
             df_plan_rel = pd.read_sql_query("SELECT data_planejada, matricula, wo, unidade, horas_planejadas FROM planejamento", engine)
             
-        df_apont_rel = pd.read_sql_query("SELECT data_registro, matricula, operador, wo, unidade, horas_normais as horas_realizadas FROM apontamentos WHERE tipo = 'Produção Normal'", engine)
+    df_apont_rel = pd.read_sql_query("SELECT data_registro, matricula, operador, wo, unidade, horas_normais as horas_realizadas FROM apontamentos WHERE tipo = 'Produção Normal'", engine)
         
-        if not df_plan_rel.empty:
+    if not df_plan_rel.empty:
             df_plan_rel = df_plan_rel.rename(columns={'data_planejada': 'data_iso'})
             if not df_apont_rel.empty:
                 df_apont_rel['data_iso'] = pd.to_datetime(df_apont_rel['data_registro'], format="%d/%m/%Y", errors='coerce').dt.strftime('%Y-%m-%d')
@@ -2409,7 +2435,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                     st.dataframe(df_aderencia[['data_iso', 'nome', 'linha', 'wo', 'unidade', 'horas_planejadas', 'horas_realizadas', 'Desvio (h)']], width="stretch")
             else:
                 st.info("Nenhum dado de planejamento ou apontamento para colaboradores ativos neste período.")
-        else:
+    else:
             st.info("Nenhum planejamento registrado para a escala selecionada.")
 
 # ------------------------------------------
