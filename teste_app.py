@@ -529,8 +529,8 @@ menu_selecionado = st.radio(
         "📊 Dash. Projetos", 
         "👥 Dash. RH",
         "🔍 Manutenção", 
-        "📑 Relatórios PDF"
-        "📈 Painel Executivo (BI)",
+        "📑 Relatórios PDF",
+        "📈 Painel Executivo (BI)"
     ],
     horizontal=True,
     label_visibility="collapsed"
