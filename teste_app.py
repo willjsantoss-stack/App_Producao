@@ -523,13 +523,14 @@ menu_selecionado = st.radio(
     "Navegação", 
     [
         "📝 Lançamentos", 
-        "🗂️ Kanban & Timeline",
+        "🗂️ Kanban & Timeline", 
         "📋 Ordens de Produção",
         "📅 Planejamento de Carga",
         "📊 Dash. Projetos", 
         "👥 Dash. RH",
         "🔍 Manutenção", 
         "📑 Relatórios PDF"
+        "📈 Painel Executivo (BI)",
     ],
     horizontal=True,
     label_visibility="collapsed"
@@ -3344,4 +3345,163 @@ elif menu_selecionado == "📑 Relatórios PDF":
                     st.error("❌ A biblioteca FPDF não está instalada. Abra o terminal e execute: pip install fpdf")
                 except Exception as e:
                     st.error(f"❌ Ocorreu um erro técnico na geração do documento: {e}")
+# ------------------------------------------
+# ABA: BUSINESS INTELLIGENCE (BI) EXECUTIVO
+# ------------------------------------------
+elif menu_selecionado == "📈 Painel Executivo (BI)":
+    
+    st.markdown("## 📈 Business Intelligence - Visão Executiva")
+    st.write("Acompanhe o desempenho global, eficiência operacional e fluxo de valor (Kanban).")
+    
+    # --- FILTRO GLOBAL DO BI ---
+    with st.container(border=True):
+        col_f1, col_f2 = st.columns(2)
+        hoje_bi = date.today()
+        dt_inicio_bi = col_f1.date_input("Data Início (Análise):", hoje_bi.replace(day=1), format="DD/MM/YYYY")
+        dt_fim_bi = col_f2.date_input("Data Fim (Análise):", hoje_bi, format="DD/MM/YYYY")
+    
+    # Busca todos os apontamentos
+    query_bi = """
+        SELECT a.data_registro, a.matricula, c.linha, a.tipo, a.atividade, a.tipo_erro, a.causador_erro, 
+               (a.horas_normais + a.he_50 + a.he_100) as horas_totais, a.saldo_bh
+        FROM apontamentos a
+        LEFT JOIN colaboradores c ON a.matricula = c.matricula
+    """
+    df_bi_raw = pd.read_sql_query(query_bi, engine)
+    
+    if not df_bi_raw.empty:
+        df_bi_raw['data_dt'] = pd.to_datetime(df_bi_raw['data_registro'], format='%d/%m/%Y', errors='coerce').dt.date
+        df_bi = df_bi_raw[(df_bi_raw['data_dt'] >= dt_inicio_bi) & (df_bi_raw['data_dt'] <= dt_fim_bi)].copy()
+        
+        if not df_bi.empty:
+            # --- CÁLCULO DAS MÉTRICAS GLOBAIS ---
+            h_uteis = df_bi[df_bi['tipo'] == 'Produção Normal']['horas_totais'].sum()
+            h_retrabalho = df_bi[df_bi['tipo'] == 'Retrabalho']['horas_totais'].sum()
+            h_parada = df_bi[df_bi['tipo'] == 'Parada']['horas_totais'].sum()
+            h_perdas = h_retrabalho + h_parada
+            h_trabalhadas = h_uteis + h_perdas
+            
+            eficiencia_global = (h_uteis / h_trabalhadas * 100) if h_trabalhadas > 0 else 0.0
+            taxa_retrabalho = (h_retrabalho / h_trabalhadas * 100) if h_trabalhadas > 0 else 0.0
+
+            # --- RENDERIZAÇÃO DOS KPIs (TERMÔMETROS) ---
+            st.markdown("### 🏆 KPIs Principais")
+            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+            
+            kpi1.metric("Eficiência Líquida (OEE)", f"{eficiencia_global:.1f}%", help="Percentual do tempo gasto agregando valor.")
+            kpi2.metric("Tempo Útil Produzido", f"{h_uteis:.0f}h", help="Total de horas normais de produção.")
+            kpi3.metric("Tempo Perdido (Custo)", f"{h_perdas:.0f}h", delta=f"{-h_perdas:.0f}h", delta_color="inverse", help="Soma de horas gastas com Retrabalho e Paradas.")
+            kpi4.metric("Taxa de Retrabalho", f"{taxa_retrabalho:.1f}%", delta="Meta: < 5%", delta_color="off")
+            
+            st.markdown("---")
+            
+            # --- LINHA 1 DE GRÁFICOS: TENDÊNCIA E SETORES ---
+            col_g1, col_g2 = st.columns(2)
+            
+            with col_g1:
+                st.markdown("#### 📈 Evolução Diária da Eficiência")
+                df_diario = df_bi[df_bi['tipo'].isin(['Produção Normal', 'Retrabalho', 'Parada'])].groupby(['data_dt', 'tipo'])['horas_totais'].sum().unstack(fill_value=0).reset_index()
+                for col in ['Produção Normal', 'Retrabalho', 'Parada']:
+                    if col not in df_diario.columns: df_diario[col] = 0.0
+                        
+                df_diario['Total'] = df_diario['Produção Normal'] + df_diario['Retrabalho'] + df_diario['Parada']
+                df_diario['Eficiencia'] = (df_diario['Produção Normal'] / df_diario['Total'] * 100).fillna(0)
+                
+                fig_evo = go.Figure()
+                fig_evo.add_trace(go.Scatter(x=df_diario['data_dt'], y=df_diario['Eficiencia'], mode='lines+markers', name='Eficiência (%)', line=dict(color='#004a99', width=3), marker=dict(size=8)))
+                fig_evo.add_hline(y=85, line_dash="dot", annotation_text="Meta (85%)", annotation_position="bottom right", line_color="#28a745")
+                fig_evo.update_layout(height=350, yaxis=dict(range=[0, 105], title="Eficiência (%)"), xaxis_title="", margin=dict(t=20, b=10))
+                st.plotly_chart(fig_evo, use_container_width=True)
+
+            with col_g2:
+                st.markdown("#### 🏭 Eficiência por Setor (Gargalos)")
+                df_setor = df_bi[df_bi['tipo'].isin(['Produção Normal', 'Retrabalho', 'Parada'])].copy()
+                df_setor['linha'] = df_setor['linha'].fillna('Não Identificado')
+                df_grp_setor = df_setor.groupby(['linha', 'tipo'])['horas_totais'].sum().unstack(fill_value=0).reset_index()
+                
+                for col in ['Produção Normal', 'Retrabalho', 'Parada']:
+                    if col not in df_grp_setor.columns: df_grp_setor[col] = 0.0
+                        
+                df_grp_setor['Total'] = df_grp_setor['Produção Normal'] + df_grp_setor['Retrabalho'] + df_grp_setor['Parada']
+                df_grp_setor['Eficiencia'] = (df_grp_setor['Produção Normal'] / df_grp_setor['Total'] * 100).fillna(0)
+                df_grp_setor = df_grp_setor[df_grp_setor['Total'] > 0].sort_values(by='Eficiencia', ascending=True)
+                
+                fig_setor = px.bar(df_grp_setor, x='Eficiencia', y='linha', orientation='h', text=df_grp_setor['Eficiencia'].apply(lambda x: f"{x:.1f}%"))
+                fig_setor.update_traces(marker_color='#17a2b8', textposition='inside')
+                fig_setor.update_layout(height=350, xaxis=dict(range=[0, 105], title="Eficiência (%)"), yaxis_title="", margin=dict(t=20, b=10))
+                st.plotly_chart(fig_setor, use_container_width=True)
+
+            st.markdown("---")
+            
+            # --- LINHA 2 DE GRÁFICOS: PARETO DE PERDAS ---
+            st.markdown("#### 🚨 Diagrama de Pareto: Ofensores de Custo")
+            col_p1, col_p2 = st.columns(2)
+            
+            with col_p1:
+                df_pareto_parada = df_bi[df_bi['tipo'] == 'Parada'].groupby('atividade')['horas_totais'].sum().reset_index()
+                if not df_pareto_parada.empty:
+                    df_pareto_parada = df_pareto_parada.sort_values(by='horas_totais', ascending=False).head(7)
+                    fig_par = px.bar(df_pareto_parada, x='atividade', y='horas_totais', title="Top 7 Motivos de Parada", text_auto='.1f', color_discrete_sequence=['#ffc107'])
+                    fig_par.update_layout(height=350, xaxis_title="", yaxis_title="Horas Perdidas")
+                    st.plotly_chart(fig_par, use_container_width=True)
+                else:
+                    st.info("Nenhuma parada registrada no período.")
+                    
+            with col_p2:
+                df_ret_pareto = df_bi[df_bi['tipo'] == 'Retrabalho'].copy()
+                if not df_ret_pareto.empty:
+                    df_ret_pareto['ofensor'] = df_ret_pareto['causador_erro'].replace('', pd.NA).fillna(df_ret_pareto['tipo_erro']).fillna('Outros')
+                    df_pareto_ret = df_ret_pareto.groupby('ofensor')['horas_totais'].sum().reset_index()
+                    df_pareto_ret = df_pareto_ret.sort_values(by='horas_totais', ascending=False).head(7)
+                    
+                    fig_ret = px.bar(df_pareto_ret, x='ofensor', y='horas_totais', title="Top 7 Ofensores de Retrabalho", text_auto='.1f', color_discrete_sequence=['#dc3545'])
+                    fig_ret.update_layout(height=350, xaxis_title="", yaxis_title="Horas Refazendo")
+                    st.plotly_chart(fig_ret, use_container_width=True)
+                else:
+                    st.info("Nenhum retrabalho registrado no período.")
+
+            st.markdown("---")
+            
+            # --- LINHA 3 DE GRÁFICOS: KANBAN E FLUXO ---
+            st.markdown("#### 🗂️ Desempenho do Fluxo Kanban (Tempo e WIP)")
+            col_k1, col_k2 = st.columns(2)
+            
+            df_kb_bi = pd.read_sql_query("SELECT fase, status, data_inicio, data_fim FROM kanban_fases WHERE categoria = 'Fábrica'", engine)
+            
+            if not df_kb_bi.empty:
+                df_kb_bi['data_inicio'] = pd.to_datetime(df_kb_bi['data_inicio'], errors='coerce')
+                df_kb_bi['data_fim'] = pd.to_datetime(df_kb_bi['data_fim'], errors='coerce')
+                
+                with col_k1:
+                    df_wip = df_kb_bi[df_kb_bi['status'] != 'Concluído'].groupby('fase').size().reset_index(name='qtd_cartoes')
+                    if not df_wip.empty:
+                        fig_wip = px.bar(df_wip, x='qtd_cartoes', y='fase', orientation='h', 
+                                         title="WIP: Onde estão os cartões agora?", text_auto=True, 
+                                         color_discrete_sequence=['#17a2b8'])
+                        fig_wip.update_layout(height=350, xaxis_title="Qtd de Ordens (WOs)", yaxis_title="")
+                        st.plotly_chart(fig_wip, use_container_width=True)
+                    else:
+                        st.info("Nenhum cartão ativo no Kanban de Fábrica.")
+                        
+                with col_k2:
+                    hoje_pd = pd.Timestamp.now()
+                    df_kb_bi['data_fim_calc'] = df_kb_bi['data_fim'].fillna(hoje_pd)
+                    df_kb_bi['dias_na_fase'] = (df_kb_bi['data_fim_calc'] - df_kb_bi['data_inicio']).dt.days
+                    
+                    df_cycle = df_kb_bi.groupby('fase')['dias_na_fase'].mean().reset_index()
+                    if not df_cycle.empty:
+                        fig_cycle = px.bar(df_cycle, x='fase', y='dias_na_fase', 
+                                           title="Tempo Médio por Fase (Cycle Time em Dias)", text_auto='.1f', 
+                                           color_discrete_sequence=['#6cb2eb'])
+                        fig_cycle.update_layout(height=350, xaxis_title="", yaxis_title="Dias Médios")
+                        st.plotly_chart(fig_cycle, use_container_width=True)
+                    else:
+                        st.info("Dados insuficientes para calcular o tempo de ciclo.")
+            else:
+                st.info("Sem dados no Kanban para análise de fluxo.")
+
+        else:
+            st.info("Nenhum apontamento produtivo encontrado para o período selecionado.")
+    else:
+        st.info("O banco de dados ainda não possui registros de apontamentos.")
 # Teste de conexão com o GitHub
