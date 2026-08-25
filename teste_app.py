@@ -2608,6 +2608,15 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
         with tab_sobras:
             st.write("Registre os materiais excedentes durante a montagem para rastreio de custo e reavaliação de engenharia.")
             
+            # --- CONSULTA FEITA ANTES DAS COLUNAS PARA LER NA EDIÇÃO E NA TABELA ---
+            df_sobras = pd.read_sql_query("""
+                SELECT s.id, s.so, s.codigo, s.descricao, s.quantidade, s.valor, s.destinacao, s.data_registro,
+                       p.customer as so_customer
+                FROM materiais_sobra s
+                LEFT JOIN (SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL) p ON s.so = p.so
+                ORDER BY s.data_registro DESC
+            """, engine)
+            
             col_sob_esq, col_sob_dir = st.columns([1, 2.5])
             
             with col_sob_esq:
@@ -2645,32 +2654,12 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                                 time_sys.sleep(1.5)
                                 st.rerun()
 
-            with col_sob_dir:
-                st.markdown("#### 📊 Extrato de Sobras (Custos e Destinação)")
-                
-                df_sobras = pd.read_sql_query("""
-                    SELECT s.id, s.so, s.codigo, s.descricao, s.quantidade, s.valor, s.destinacao, s.data_registro,
-                           p.customer as so_customer
-                    FROM materiais_sobra s
-                    LEFT JOIN (SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL) p ON s.so = p.so
-                    ORDER BY s.data_registro DESC
-                """, engine)
-                
-                if not df_sobras.empty:
-                    df_sobras_view = df_sobras.copy()
-                    df_sobras_view['data_registro'] = pd.to_datetime(df_sobras_view['data_registro']).dt.strftime('%d/%m/%Y')
-                    df_sobras_view['valor'] = df_sobras_view['valor'].apply(lambda x: f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    
-                    cols_rename = {
-                        'so': 'SO', 'so_customer': 'Cliente', 'codigo': 'Código', 'descricao': 'Descrição',
-                        'quantidade': 'Qtd', 'valor': 'Valor Total', 'destinacao': 'Destinação', 'data_registro': 'Data'
-                    }
-                    
-                    st.dataframe(df_sobras_view[['so', 'so_customer', 'codigo', 'descricao', 'quantidade', 'valor', 'destinacao', 'data_registro']].rename(columns=cols_rename), width="stretch", hide_index=True)
-                    
-                    with st.expander("✏️ Editar ou Excluir Apontamento de Sobra"):
+                st.write("") # Espaçamento
+                # --- PAINEL DE EDIÇÃO MOVIDO PARA A COLUNA DA ESQUERDA ---
+                with st.expander("✏️ Editar ou Excluir Apontamento de Sobra"):
+                    if not df_sobras.empty:
                         sobra_edit_list = [f"ID {r['id']} | SO: {r['so']} | Cód: {r['codigo']}" for _, r in df_sobras.iterrows()]
-                        sobra_selecionada = st.selectbox("1. Selecione o registro que deseja alterar:", ["- Selecione -"] + sobra_edit_list)
+                        sobra_selecionada = st.selectbox("1. Selecione o registro:", ["- Selecione -"] + sobra_edit_list)
                         
                         if sobra_selecionada != "- Selecione -":
                             id_edit = sobra_selecionada.split(" | ")[0].replace("ID ", "")
@@ -2684,19 +2673,17 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                             
                             edit_desc = st.text_area("Descrição", value=row_sobra['descricao'], key="ed_desc_sobra")
                             
-                            # Carrega a lista atualizada de destinações do banco
                             df_dest_edit = pd.read_sql_query("SELECT destinacao FROM destinacoes_sobra", engine)
                             list_dest_edit = df_dest_edit['destinacao'].tolist() if not df_dest_edit.empty else ["- Vazio -"]
                             
-                            # Tenta achar o índice atual para já vir selecionado
                             try:
                                 idx_dest = list_dest_edit.index(row_sobra['destinacao'])
                             except ValueError:
                                 idx_dest = 0
                                 
                             c_e3, c_e4 = st.columns(2)
-                            edit_val = c_e3.number_input("Valor Total Estimado (R$)", value=float(row_sobra['valor']), min_value=0.0, step=10.0, key="ed_val_sobra")
-                            edit_dest = c_e4.selectbox("Destinação / Justificativa", list_dest_edit, index=idx_dest, key="ed_dest_sobra")
+                            edit_val = c_e3.number_input("Valor Estimado (R$)", value=float(row_sobra['valor']), min_value=0.0, step=10.0, key="ed_val_sobra")
+                            edit_dest = c_e4.selectbox("Destinação", list_dest_edit, index=idx_dest, key="ed_dest_sobra")
                             
                             st.write("")
                             c_btn_e1, c_btn_e2 = st.columns([1, 1])
@@ -2721,7 +2708,25 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                                 st.success("✔️ Registro excluído!")
                                 time_sys.sleep(1.5)
                                 st.rerun()
+                    else:
+                        st.info("Nenhuma sobra para editar.")
 
+            with col_sob_dir:
+                st.markdown("#### 📊 Extrato de Sobras (Custos e Destinação)")
+                
+                if not df_sobras.empty:
+                    df_sobras_view = df_sobras.copy()
+                    df_sobras_view['data_registro'] = pd.to_datetime(df_sobras_view['data_registro']).dt.strftime('%d/%m/%Y')
+                    df_sobras_view['valor'] = df_sobras_view['valor'].apply(lambda x: f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    
+                    cols_rename = {
+                        'so': 'SO', 'so_customer': 'Cliente', 'codigo': 'Código', 'descricao': 'Descrição',
+                        'quantidade': 'Qtd', 'valor': 'Valor Total', 'destinacao': 'Destinação', 'data_registro': 'Data'
+                    }
+                    
+                    st.dataframe(df_sobras_view[['so', 'so_customer', 'codigo', 'descricao', 'quantidade', 'valor', 'destinacao', 'data_registro']].rename(columns=cols_rename), width="stretch", hide_index=True)
+                else:
+                    st.info("Nenhuma sobra de material registrada até o momento.")
     # ==========================================
     # KANBAN VISUAL E MARCOS
     # ==========================================
