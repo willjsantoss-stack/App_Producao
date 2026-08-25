@@ -2658,56 +2658,68 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                 # --- PAINEL DE EDIÇÃO MOVIDO PARA A COLUNA DA ESQUERDA ---
                 with st.expander("✏️ Editar ou Excluir Apontamento de Sobra"):
                     if not df_sobras.empty:
-                        sobra_edit_list = [f"ID {r['id']} | SO: {r['so']} | Cód: {r['codigo']}" for _, r in df_sobras.iterrows()]
-                        sobra_selecionada = st.selectbox("1. Selecione o registro:", ["- Selecione -"] + sobra_edit_list)
                         
-                        if sobra_selecionada != "- Selecione -":
-                            id_edit = sobra_selecionada.split(" | ")[0].replace("ID ", "")
-                            row_sobra = df_sobras[df_sobras['id'].astype(str) == id_edit].iloc[0]
+                        # 1. Filtra as SOs que possuem sobras cadastradas
+                        df_sos_com_sobra = df_sobras[['so', 'so_customer']].drop_duplicates()
+                        lista_sos_edit = ["- Selecione o Projeto -"] + sorted([f"{r['so']} - {r['so_customer'] if pd.notna(r['so_customer']) else 'Sem Cliente'}" for _, r in df_sos_com_sobra.iterrows()])
+                        
+                        so_edit_sel = st.selectbox("1. Selecione o Projeto (SO):", lista_sos_edit, key="so_edit_sobra_sel")
+                        
+                        if so_edit_sel != "- Selecione o Projeto -":
+                            so_clean_edit = so_edit_sel.split(" - ")[0].strip()
+                            df_sobras_filtro = df_sobras[df_sobras['so'] == so_clean_edit]
                             
-                            st.write("**2. Altere os dados abaixo:**")
+                            # 2. Mostra apenas os materiais da SO selecionada
+                            sobra_edit_list = ["- Selecione o Material -"] + [f"ID {r['id']} | Cód: {r['codigo']} - {r['descricao'][:30]}..." for _, r in df_sobras_filtro.iterrows()]
+                            sobra_selecionada = st.selectbox("2. Selecione o registro:", sobra_edit_list, key="item_edit_sobra_sel")
                             
-                            c_e1, c_e2 = st.columns(2)
-                            edit_cod = c_e1.text_input("Código do Material", value=row_sobra['codigo'], key="ed_cod_sobra")
-                            edit_qtd = c_e2.number_input("Quantidade", value=int(row_sobra['quantidade']), min_value=1, step=1, key="ed_qtd_sobra")
-                            
-                            edit_desc = st.text_area("Descrição", value=row_sobra['descricao'], key="ed_desc_sobra")
-                            
-                            df_dest_edit = pd.read_sql_query("SELECT destinacao FROM destinacoes_sobra", engine)
-                            list_dest_edit = df_dest_edit['destinacao'].tolist() if not df_dest_edit.empty else ["- Vazio -"]
-                            
-                            try:
-                                idx_dest = list_dest_edit.index(row_sobra['destinacao'])
-                            except ValueError:
-                                idx_dest = 0
+                            if sobra_selecionada != "- Selecione o Material -":
+                                id_edit = sobra_selecionada.split(" | ")[0].replace("ID ", "")
+                                row_sobra = df_sobras_filtro[df_sobras_filtro['id'].astype(str) == id_edit].iloc[0]
                                 
-                            c_e3, c_e4 = st.columns(2)
-                            edit_val = c_e3.number_input("Valor Estimado (R$)", value=float(row_sobra['valor']), min_value=0.0, step=10.0, key="ed_val_sobra")
-                            edit_dest = c_e4.selectbox("Destinação", list_dest_edit, index=idx_dest, key="ed_dest_sobra")
-                            
-                            st.write("")
-                            c_btn_e1, c_btn_e2 = st.columns([1, 1])
-                            
-                            if c_btn_e1.button("💾 Salvar Alterações", type="primary", use_container_width=True):
-                                if not edit_cod or not edit_desc:
-                                    st.error("O Código e a Descrição não podem ficar em branco.")
-                                else:
-                                    cursor.execute("""
-                                        UPDATE materiais_sobra 
-                                        SET codigo=%s, descricao=%s, quantidade=%s, valor=%s, destinacao=%s 
-                                        WHERE id=%s
-                                    """, (edit_cod.strip(), edit_desc.strip(), edit_qtd, edit_val, edit_dest, id_edit))
+                                st.write("**3. Altere os dados abaixo:**")
+                                
+                                c_e1, c_e2 = st.columns(2)
+                                edit_cod = c_e1.text_input("Código do Material", value=row_sobra['codigo'], key="ed_cod_sobra")
+                                edit_qtd = c_e2.number_input("Quantidade", value=int(row_sobra['quantidade']), min_value=1, step=1, key="ed_qtd_sobra")
+                                
+                                edit_desc = st.text_area("Descrição", value=row_sobra['descricao'], key="ed_desc_sobra")
+                                
+                                df_dest_edit = pd.read_sql_query("SELECT destinacao FROM destinacoes_sobra", engine)
+                                list_dest_edit = df_dest_edit['destinacao'].tolist() if not df_dest_edit.empty else ["- Vazio -"]
+                                
+                                try:
+                                    idx_dest = list_dest_edit.index(row_sobra['destinacao'])
+                                except ValueError:
+                                    idx_dest = 0
+                                    
+                                c_e3, c_e4 = st.columns(2)
+                                edit_val = c_e3.number_input("Valor Estimado (R$)", value=float(row_sobra['valor']), min_value=0.0, step=10.0, key="ed_val_sobra")
+                                edit_dest = c_e4.selectbox("Destinação", list_dest_edit, index=idx_dest, key="ed_dest_sobra")
+                                
+                                st.write("")
+                                c_btn_e1, c_btn_e2 = st.columns([1, 1])
+                                
+                                if c_btn_e1.button("💾 Salvar Alterações", type="primary", use_container_width=True):
+                                    if not edit_cod or not edit_desc:
+                                        st.error("O Código e a Descrição não podem ficar em branco.")
+                                    else:
+                                        cursor.execute("""
+                                            UPDATE materiais_sobra 
+                                            SET codigo=%s, descricao=%s, quantidade=%s, valor=%s, destinacao=%s 
+                                            WHERE id=%s
+                                        """, (edit_cod.strip(), edit_desc.strip(), edit_qtd, edit_val, edit_dest, id_edit))
+                                        conn.commit()
+                                        st.success("✔️ Registro atualizado com sucesso!")
+                                        time_sys.sleep(1.5)
+                                        st.rerun()
+                                        
+                                if c_btn_e2.button("🗑️ Excluir Registro", use_container_width=True):
+                                    cursor.execute("DELETE FROM materiais_sobra WHERE id=%s", (id_edit,))
                                     conn.commit()
-                                    st.success("✔️ Registro atualizado com sucesso!")
+                                    st.success("✔️ Registro excluído!")
                                     time_sys.sleep(1.5)
                                     st.rerun()
-                                    
-                            if c_btn_e2.button("🗑️ Excluir Registro", use_container_width=True):
-                                cursor.execute("DELETE FROM materiais_sobra WHERE id=%s", (id_edit,))
-                                conn.commit()
-                                st.success("✔️ Registro excluído!")
-                                time_sys.sleep(1.5)
-                                st.rerun()
                     else:
                         st.info("Nenhuma sobra para editar.")
 
