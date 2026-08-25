@@ -2727,6 +2727,44 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                 st.markdown("#### 📊 Extrato de Sobras (Custos e Destinação)")
                 
                 if not df_sobras.empty:
+                    # --- NOVOS GRÁFICOS DE ANÁLISE DE CUSTO ---
+                    # Garante que o valor é numérico para os cálculos
+                    df_sobras['valor_num'] = pd.to_numeric(df_sobras['valor'], errors='coerce').fillna(0)
+                    
+                    cg1, cg2 = st.columns(2)
+                    
+                    with cg1:
+                        # Gráfico de Barras: Custo por Projeto
+                        df_graf_so = df_sobras.groupby('so')['valor_num'].sum().reset_index()
+                        df_graf_so = df_graf_so.sort_values(by='valor_num', ascending=True).tail(10) # Pega os 10 maiores
+                        df_graf_so['valor_str'] = df_graf_so['valor_num'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        
+                        fig_so = px.bar(df_graf_so, x='valor_num', y='so', orientation='h', 
+                                        title="Top 10 Projetos (Custo de Sobras)",
+                                        text='valor_str',
+                                        color_discrete_sequence=['#dc3545'])
+                        
+                        fig_so.update_traces(textposition='auto', textfont=dict(color='white' if len(df_graf_so) > 0 else 'black'))
+                        fig_so.update_layout(height=280, margin=dict(l=10, r=20, t=30, b=10), xaxis=dict(showticklabels=False, title=""), yaxis=dict(title=""))
+                        st.plotly_chart(fig_so, use_container_width=True)
+                        
+                    with cg2:
+                        # Gráfico Donut: Custo por Destinação
+                        df_graf_dest = df_sobras.groupby('destinacao')['valor_num'].sum().reset_index()
+                        
+                        fig_dest = px.pie(df_graf_dest, names='destinacao', values='valor_num', hole=0.45, 
+                                          title="Proporção Financeira por Destinação",
+                                          color_discrete_sequence=px.colors.qualitative.Pastel)
+                        
+                        fig_dest.update_traces(textinfo='percent', textposition='inside', insidetextorientation='radial')
+                        fig_dest.update_layout(height=280, margin=dict(l=10, r=10, t=30, b=10), 
+                                               legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5))
+                        st.plotly_chart(fig_dest, use_container_width=True)
+                    
+                    st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px;'>", unsafe_allow_html=True)
+                    # ------------------------------------------------
+                    
+                    # --- TABELA DE HISTÓRICO ---
                     df_sobras_view = df_sobras.copy()
                     df_sobras_view['data_registro'] = pd.to_datetime(df_sobras_view['data_registro']).dt.strftime('%d/%m/%Y')
                     df_sobras_view['valor'] = df_sobras_view['valor'].apply(lambda x: f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
