@@ -2668,19 +2668,60 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                     
                     st.dataframe(df_sobras_view[['so', 'so_customer', 'codigo', 'descricao', 'quantidade', 'valor', 'destinacao', 'data_registro']].rename(columns=cols_rename), width="stretch", hide_index=True)
                     
-                    with st.expander("🗑️ Excluir registro incorreto"):
-                        sobra_del_list = [f"ID {r['id']} | SO: {r['so']} | Cód: {r['codigo']}" for _, r in df_sobras.iterrows()]
-                        sobra_para_deletar = st.selectbox("Selecione o registro para apagar:", ["- Selecione -"] + sobra_del_list)
-                        if st.button("Confirmar Exclusão de Sobra") and sobra_para_deletar != "- Selecione -":
-                            id_del = sobra_para_deletar.split(" | ")[0].replace("ID ", "")
-                            cursor.execute("DELETE FROM materiais_sobra WHERE id = %s", (id_del,))
-                            conn.commit()
-                            st.success("Registro apagado!")
-                            time_sys.sleep(1)
-                            st.rerun()
-                else:
-                    st.info("Nenhuma sobra de material registrada até o momento.")
-                    
+                    with st.expander("✏️ Editar ou Excluir Apontamento de Sobra"):
+                        sobra_edit_list = [f"ID {r['id']} | SO: {r['so']} | Cód: {r['codigo']}" for _, r in df_sobras.iterrows()]
+                        sobra_selecionada = st.selectbox("1. Selecione o registro que deseja alterar:", ["- Selecione -"] + sobra_edit_list)
+                        
+                        if sobra_selecionada != "- Selecione -":
+                            id_edit = sobra_selecionada.split(" | ")[0].replace("ID ", "")
+                            row_sobra = df_sobras[df_sobras['id'].astype(str) == id_edit].iloc[0]
+                            
+                            st.write("**2. Altere os dados abaixo:**")
+                            
+                            c_e1, c_e2 = st.columns(2)
+                            edit_cod = c_e1.text_input("Código do Material", value=row_sobra['codigo'], key="ed_cod_sobra")
+                            edit_qtd = c_e2.number_input("Quantidade", value=int(row_sobra['quantidade']), min_value=1, step=1, key="ed_qtd_sobra")
+                            
+                            edit_desc = st.text_area("Descrição", value=row_sobra['descricao'], key="ed_desc_sobra")
+                            
+                            # Carrega a lista atualizada de destinações do banco
+                            df_dest_edit = pd.read_sql_query("SELECT destinacao FROM destinacoes_sobra", engine)
+                            list_dest_edit = df_dest_edit['destinacao'].tolist() if not df_dest_edit.empty else ["- Vazio -"]
+                            
+                            # Tenta achar o índice atual para já vir selecionado
+                            try:
+                                idx_dest = list_dest_edit.index(row_sobra['destinacao'])
+                            except ValueError:
+                                idx_dest = 0
+                                
+                            c_e3, c_e4 = st.columns(2)
+                            edit_val = c_e3.number_input("Valor Total Estimado (R$)", value=float(row_sobra['valor']), min_value=0.0, step=10.0, key="ed_val_sobra")
+                            edit_dest = c_e4.selectbox("Destinação / Justificativa", list_dest_edit, index=idx_dest, key="ed_dest_sobra")
+                            
+                            st.write("")
+                            c_btn_e1, c_btn_e2 = st.columns([1, 1])
+                            
+                            if c_btn_e1.button("💾 Salvar Alterações", type="primary", use_container_width=True):
+                                if not edit_cod or not edit_desc:
+                                    st.error("O Código e a Descrição não podem ficar em branco.")
+                                else:
+                                    cursor.execute("""
+                                        UPDATE materiais_sobra 
+                                        SET codigo=%s, descricao=%s, quantidade=%s, valor=%s, destinacao=%s 
+                                        WHERE id=%s
+                                    """, (edit_cod.strip(), edit_desc.strip(), edit_qtd, edit_val, edit_dest, id_edit))
+                                    conn.commit()
+                                    st.success("✔️ Registro atualizado com sucesso!")
+                                    time_sys.sleep(1.5)
+                                    st.rerun()
+                                    
+                            if c_btn_e2.button("🗑️ Excluir Registro", use_container_width=True):
+                                cursor.execute("DELETE FROM materiais_sobra WHERE id=%s", (id_edit,))
+                                conn.commit()
+                                st.success("✔️ Registro excluído!")
+                                time_sys.sleep(1.5)
+                                st.rerun()
+
     # ==========================================
     # KANBAN VISUAL E MARCOS
     # ==========================================
