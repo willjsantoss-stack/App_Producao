@@ -2479,112 +2479,208 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
     tab_kanban, tab_materiais, tab_timeline = st.tabs(["📋 Quadro Kanban", "📦 Gestão de Materiais", "📈 Linha do Tempo (Timeline)"])
     
     # ==========================================
-    # GESTÃO DE MATERIAIS
+    # GESTÃO DE MATERIAIS (FALTAS E SOBRAS)
     # ==========================================
     with tab_materiais:
-        st.markdown("### ⚠️ Controle de Materiais Faltantes e Recebimentos")
-        st.write("Registre os materiais que travam a produção. A data de recebimento formará um marco na linha do tempo do projeto.")
         
-        # Proporção ajustada para dar mais espaço à visualização das colunas
-        col_mat_esq, col_mat_dir = st.columns([1, 2.5])
-        
-        with col_mat_esq:
-            with st.container(border=True):
-                st.markdown("#### ➕ Apontar Nova Falta")
-                
-                with st.form("form_novo_material", clear_on_submit=True):
-                    projeto_selecionado = st.selectbox("Sales Order (SO) / Cliente*", opcoes_projetos)
-                    cod_mat = st.text_input("Código do Material*")
-                    desc_mat = st.text_area("Descrição do Material*")
-                    qtd_mat = st.number_input("Quantidade*", min_value=1, step=1)
-                    
-                    # CORREÇÃO: Formato Brasileiro de Data Forçado
-                    dt_prev = st.date_input("Data Prevista de Chegada (Opcional)", value=None, format="DD/MM/YYYY")
-                    
-                    submit_mat = st.form_submit_button("💾 Registrar Falta", type="primary", use_container_width=True)
-                    
-                    if submit_mat:
-                        if not cod_mat or not desc_mat or qtd_mat <= 0 or projeto_selecionado == "- Nenhum projeto ativo -":
-                            st.error("❌ Projeto, Código, Descrição e Quantidade são obrigatórios!")
-                        else:
-                            so_extraida = projeto_selecionado.split(" - ")[0].strip()
-                            dt_prev_str = dt_prev.strftime('%Y-%m-%d') if dt_prev else None
-                            
-                            cursor.execute("""
-                                INSERT INTO kanban_materiais (wo, codigo, descricao, quantidade, data_apontamento, data_prevista_chegada, status)
-                                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, 'Faltante')
-                            """, (so_extraida, cod_mat.strip(), desc_mat.strip(), qtd_mat, dt_prev_str))
-                            conn.commit()
-                            st.success("✔️ Material registrado como faltante na SO!")
-                            time_sys.sleep(1.5)
-                            st.rerun()
+        # --- CRIAÇÃO DAS TABELAS DE SOBRA AUTOMÁTICA ---
+        try:
+            cursor.execute('CREATE TABLE IF NOT EXISTS destinacoes_sobra (destinacao TEXT PRIMARY KEY)')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS materiais_sobra (
+                    id SERIAL PRIMARY KEY,
+                    so TEXT,
+                    codigo TEXT,
+                    descricao TEXT,
+                    quantidade INTEGER,
+                    valor NUMERIC,
+                    destinacao TEXT,
+                    data_registro TIMESTAMP
+                )
+            ''')
+            # Popula algumas destinações iniciais se estiver vazio
+            cursor.execute("SELECT COUNT(*) FROM destinacoes_sobra")
+            if cursor.fetchone()[0] == 0:
+                for d in ["Devolução Almoxarifado", "Sucata / Descarte", "Ajuste de BOM (Engenharia)"]:
+                    cursor.execute("INSERT INTO destinacoes_sobra (destinacao) VALUES (%s)", (d,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        # ----------------------------------------------
 
-        with col_mat_dir:
-            st.markdown("#### ⏳ Materiais Aguardando Recebimento")
+        st.markdown("### 📦 Controle de Materiais: Faltas e Sobras")
+        
+        tab_faltas, tab_sobras = st.tabs(["⚠️ Controle de Faltas", "♻️ Apontamento de Sobras"])
+        
+        # ---------------------------------------------------------
+        # SUB-ABA 1: FALTAS (O código atual que já funciona perfeitamente)
+        # ---------------------------------------------------------
+        with tab_faltas:
+            st.write("Registre os materiais que travam a produção. A data de recebimento formará um marco na linha do tempo do projeto.")
             
-            # --- ATUALIZADO: JOIN com PROJETOS para pegar o nome do Cliente ---
-            df_mats = pd.read_sql_query("""
-                SELECT m.id, m.wo as so_vinculada, m.codigo, m.descricao, m.quantidade, m.data_prevista_chegada,
-                       p.customer as so_customer
-                FROM kanban_materiais m
-                LEFT JOIN (SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL) p ON m.wo = p.so
-                WHERE m.status = 'Faltante'
-            """, engine)
+            col_mat_esq, col_mat_dir = st.columns([1, 2.5])
             
-            if not df_mats.empty:
-                # Agrupa e encontra as SOs únicas que têm materiais faltantes
-                sos_faltantes = df_mats['so_vinculada'].unique()
-                
-                # Quebra em grupos de 3 colunas por linha para não esmagar a interface
-                num_cols_per_row = 3
-                for i in range(0, len(sos_faltantes), num_cols_per_row):
-                    cols_projetos = st.columns(num_cols_per_row)
+            with col_mat_esq:
+                with st.container(border=True):
+                    st.markdown("#### ➕ Apontar Nova Falta")
                     
-                    for j in range(num_cols_per_row):
-                        if i + j < len(sos_faltantes):
-                            so_falta = sos_faltantes[i + j]
-                            df_mats_so = df_mats[df_mats['so_vinculada'] == so_falta]
-                            
-                            # --- NOME DO CLIENTE NO CABEÇALHO ---
-                            cliente_nome = df_mats_so['so_customer'].iloc[0] if pd.notna(df_mats_so['so_customer'].iloc[0]) else ""
-                            if cliente_nome:
-                                # Abrevia em 20 caracteres para não quebrar a coluna
-                                cliente_abrev = (cliente_nome[:20] + '...') if len(cliente_nome) > 20 else cliente_nome
-                                titulo_cabecalho = f"SO: {so_falta}<br><span style='font-size: 11px; font-weight: normal;'>{cliente_abrev}</span>"
+                    with st.form("form_novo_material", clear_on_submit=True):
+                        projeto_selecionado = st.selectbox("Sales Order (SO) / Cliente*", opcoes_projetos)
+                        cod_mat = st.text_input("Código do Material*")
+                        desc_mat = st.text_area("Descrição do Material*")
+                        qtd_mat = st.number_input("Quantidade*", min_value=1, step=1)
+                        dt_prev = st.date_input("Data Prevista de Chegada (Opcional)", value=None, format="DD/MM/YYYY")
+                        
+                        submit_mat = st.form_submit_button("💾 Registrar Falta", type="primary", use_container_width=True)
+                        
+                        if submit_mat:
+                            if not cod_mat or not desc_mat or qtd_mat <= 0 or projeto_selecionado == "- Nenhum projeto ativo -":
+                                st.error("❌ Projeto, Código, Descrição e Quantidade são obrigatórios!")
                             else:
-                                titulo_cabecalho = f"SO: {so_falta}"
-                            
-                            with cols_projetos[j]:
-                                # Cabeçalho da Coluna do Projeto (Vermelho Alerta) COM O NOME
-                                st.markdown(f"<div style='text-align: center; background-color: #f8d7da; color: #721c24; padding: 6px; border-radius: 5px; margin-bottom: 10px; font-weight: bold; border: 1px solid #f5c6cb;'>{titulo_cabecalho}</div>", unsafe_allow_html=True)
+                                so_extraida = projeto_selecionado.split(" - ")[0].strip()
+                                dt_prev_str = dt_prev.strftime('%Y-%m-%d') if dt_prev else None
                                 
-                                # Cartões de materiais para esta SO específica
-                                for _, row in df_mats_so.iterrows():
-                                    with st.container(border=True):
-                                        st.markdown(f"**Cód:** `{row['codigo']}`")
-                                        st.markdown(f"<span style='font-size: 14px;'>{row['descricao']}</span>", unsafe_allow_html=True)
-                                        st.write(f"**Qtd:** {row['quantidade']} un")
-                                        
-                                        prev = pd.to_datetime(row['data_prevista_chegada']).strftime('%d/%m/%Y') if pd.notna(row['data_prevista_chegada']) else "Não informada"
-                                        st.caption(f"📅 *Previsão: {prev}*")
-                                        
-                                        # Botões de Ação (Baixa e Excluir)
-                                        c_b1, c_b2 = st.columns(2)
-                                        if c_b1.button("📦 Baixa", key=f"rec_mat_{row['id']}", type="primary", use_container_width=True, help="Confirmar recebimento do material"):
-                                            cursor.execute("UPDATE kanban_materiais SET status = 'Recebido', data_recebimento = CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo' WHERE id = %s", (row['id'],))
-                                            conn.commit()
-                                            st.success("Recebido!")
-                                            time_sys.sleep(1)
-                                            st.rerun()
+                                cursor.execute("""
+                                    INSERT INTO kanban_materiais (wo, codigo, descricao, quantidade, data_apontamento, data_prevista_chegada, status)
+                                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, 'Faltante')
+                                """, (so_extraida, cod_mat.strip(), desc_mat.strip(), qtd_mat, dt_prev_str))
+                                conn.commit()
+                                st.success("✔️ Material registrado como faltante na SO!")
+                                time_sys.sleep(1.5)
+                                st.rerun()
+
+            with col_mat_dir:
+                st.markdown("#### ⏳ Materiais Aguardando Recebimento")
+                
+                df_mats = pd.read_sql_query("""
+                    SELECT m.id, m.wo as so_vinculada, m.codigo, m.descricao, m.quantidade, m.data_prevista_chegada,
+                           p.customer as so_customer
+                    FROM kanban_materiais m
+                    LEFT JOIN (SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL) p ON m.wo = p.so
+                    WHERE m.status = 'Faltante'
+                """, engine)
+                
+                if not df_mats.empty:
+                    sos_faltantes = df_mats['so_vinculada'].unique()
+                    num_cols_per_row = 3
+                    
+                    for i in range(0, len(sos_faltantes), num_cols_per_row):
+                        cols_projetos = st.columns(num_cols_per_row)
+                        for j in range(num_cols_per_row):
+                            if i + j < len(sos_faltantes):
+                                so_falta = sos_faltantes[i + j]
+                                df_mats_so = df_mats[df_mats['so_vinculada'] == so_falta]
+                                
+                                cliente_nome = df_mats_so['so_customer'].iloc[0] if pd.notna(df_mats_so['so_customer'].iloc[0]) else ""
+                                if cliente_nome:
+                                    cliente_abrev = (cliente_nome[:20] + '...') if len(cliente_nome) > 20 else cliente_nome
+                                    titulo_cabecalho = f"SO: {so_falta}<br><span style='font-size: 11px; font-weight: normal;'>{cliente_abrev}</span>"
+                                else:
+                                    titulo_cabecalho = f"SO: {so_falta}"
+                                
+                                with cols_projetos[j]:
+                                    st.markdown(f"<div style='text-align: center; background-color: #f8d7da; color: #721c24; padding: 6px; border-radius: 5px; margin-bottom: 10px; font-weight: bold; border: 1px solid #f5c6cb;'>{titulo_cabecalho}</div>", unsafe_allow_html=True)
+                                    
+                                    for _, row in df_mats_so.iterrows():
+                                        with st.container(border=True):
+                                            st.markdown(f"**Cód:** `{row['codigo']}`")
+                                            st.markdown(f"<span style='font-size: 14px;'>{row['descricao']}</span>", unsafe_allow_html=True)
+                                            st.write(f"**Qtd:** {row['quantidade']} un")
+                                            prev = pd.to_datetime(row['data_prevista_chegada']).strftime('%d/%m/%Y') if pd.notna(row['data_prevista_chegada']) else "Não informada"
+                                            st.caption(f"📅 *Previsão: {prev}*")
                                             
-                                        if c_b2.button("🗑️ Excluir", key=f"del_mat_{row['id']}", use_container_width=True, help="Apagar apontamento lançado errado"):
-                                            cursor.execute("DELETE FROM kanban_materiais WHERE id = %s", (row['id'],))
-                                            conn.commit()
-                                            st.success("Excluído!")
-                                            time_sys.sleep(1)
-                                            st.rerun()
-            else:
-                st.info("🎉 Nenhum material faltante no momento. Produção liberada!")
+                                            c_b1, c_b2 = st.columns(2)
+                                            if c_b1.button("📦 Baixa", key=f"rec_mat_{row['id']}", type="primary", use_container_width=True):
+                                                cursor.execute("UPDATE kanban_materiais SET status = 'Recebido', data_recebimento = CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo' WHERE id = %s", (row['id'],))
+                                                conn.commit()
+                                                st.rerun()
+                                                
+                                            if c_b2.button("🗑️ Excluir", key=f"del_mat_{row['id']}", use_container_width=True):
+                                                cursor.execute("DELETE FROM kanban_materiais WHERE id = %s", (row['id'],))
+                                                conn.commit()
+                                                st.rerun()
+                else:
+                    st.info("🎉 Nenhum material faltante no momento.")
+
+        # ---------------------------------------------------------
+        # SUB-ABA 2: SOBRAS (O Novo Relatório de Controle de Custo)
+        # ---------------------------------------------------------
+        with tab_sobras:
+            st.write("Registre os materiais excedentes durante a montagem para rastreio de custo e reavaliação de engenharia.")
+            
+            col_sob_esq, col_sob_dir = st.columns([1, 2.5])
+            
+            with col_sob_esq:
+                with st.container(border=True):
+                    st.markdown("#### ➕ Apontar Sobra")
+                    
+                    df_destinacoes = pd.read_sql_query("SELECT destinacao FROM destinacoes_sobra", engine)
+                    lista_destinacoes = df_destinacoes['destinacao'].tolist() if not df_destinacoes.empty else ["- Cadastre na Manutenção -"]
+                    
+                    with st.form("form_nova_sobra", clear_on_submit=True):
+                        projeto_sel_sobra = st.selectbox("Sales Order (SO) / Cliente*", opcoes_projetos)
+                        cod_sobra = st.text_input("Código do Material*")
+                        desc_sobra = st.text_area("Descrição do Material*")
+                        
+                        c_qtd, c_val = st.columns(2)
+                        qtd_sobra = c_qtd.number_input("Quantidade*", min_value=1, step=1)
+                        val_sobra = c_val.number_input("Valor Total Estimado (R$)*", min_value=0.01, step=10.0)
+                        
+                        dest_sobra = st.selectbox("Destinação / Justificativa*", ["- Selecione -"] + lista_destinacoes)
+                        
+                        submit_sobra = st.form_submit_button("💾 Registrar Sobra", type="primary", use_container_width=True)
+                        
+                        if submit_sobra:
+                            if not cod_sobra or not desc_sobra or qtd_sobra <= 0 or val_sobra <= 0 or projeto_sel_sobra == "- Nenhum projeto ativo -" or dest_sobra == "- Selecione -":
+                                st.error("❌ Preencha todos os campos obrigatórios (Quantidade e Valor devem ser maiores que zero)!")
+                            else:
+                                so_ext_sobra = projeto_sel_sobra.split(" - ")[0].strip()
+                                
+                                cursor.execute("""
+                                    INSERT INTO materiais_sobra (so, codigo, descricao, quantidade, valor, destinacao, data_registro)
+                                    VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')
+                                """, (so_ext_sobra, cod_sobra.strip(), desc_sobra.strip(), qtd_sobra, val_sobra, dest_sobra))
+                                conn.commit()
+                                st.success("✔️ Sobra de material registrada com sucesso!")
+                                time_sys.sleep(1.5)
+                                st.rerun()
+
+            with col_sob_dir:
+                st.markdown("#### 📊 Extrato de Sobras (Custos e Destinação)")
+                
+                df_sobras = pd.read_sql_query("""
+                    SELECT s.id, s.so, s.codigo, s.descricao, s.quantidade, s.valor, s.destinacao, s.data_registro,
+                           p.customer as so_customer
+                    FROM materiais_sobra s
+                    LEFT JOIN (SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL) p ON s.so = p.so
+                    ORDER BY s.data_registro DESC
+                """, engine)
+                
+                if not df_sobras.empty:
+                    df_sobras_view = df_sobras.copy()
+                    df_sobras_view['data_registro'] = pd.to_datetime(df_sobras_view['data_registro']).dt.strftime('%d/%m/%Y')
+                    df_sobras_view['valor'] = df_sobras_view['valor'].apply(lambda x: f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    
+                    cols_rename = {
+                        'so': 'SO', 'so_customer': 'Cliente', 'codigo': 'Código', 'descricao': 'Descrição',
+                        'quantidade': 'Qtd', 'valor': 'Valor Total', 'destinacao': 'Destinação', 'data_registro': 'Data'
+                    }
+                    
+                    st.dataframe(df_sobras_view[['so', 'so_customer', 'codigo', 'descricao', 'quantidade', 'valor', 'destinacao', 'data_registro']].rename(columns=cols_rename), width="stretch", hide_index=True)
+                    
+                    with st.expander("🗑️ Excluir registro incorreto"):
+                        sobra_del_list = [f"ID {r['id']} | SO: {r['so']} | Cód: {r['codigo']}" for _, r in df_sobras.iterrows()]
+                        sobra_para_deletar = st.selectbox("Selecione o registro para apagar:", ["- Selecione -"] + sobra_del_list)
+                        if st.button("Confirmar Exclusão de Sobra") and sobra_para_deletar != "- Selecione -":
+                            id_del = sobra_para_deletar.split(" | ")[0].replace("ID ", "")
+                            cursor.execute("DELETE FROM materiais_sobra WHERE id = %s", (id_del,))
+                            conn.commit()
+                            st.success("Registro apagado!")
+                            time_sys.sleep(1)
+                            st.rerun()
+                else:
+                    st.info("Nenhuma sobra de material registrada até o momento.")
+                    
     # ==========================================
     # KANBAN VISUAL E MARCOS
     # ==========================================
@@ -3010,7 +3106,7 @@ elif menu_selecionado == "🔍 Manutenção":
         cat_manut = st.radio("Selecione a Tabela de Visualização/Edição:", [
             "Colaboradores", "Férias", "Feriados", 
             "Calendário Lucy", "Configurações (Erros e Paradas)", "Parâmetros de Jornada", 
-            "Responsáveis (Projetos)", "📥 Importação de Excel (Em Lote)"
+            "Responsáveis (Projetos)", "Destinações de Sobra", "📥 Importação de Excel (Em Lote)"
         ], horizontal=True)
         
         with st.container(border=True):
@@ -3183,6 +3279,14 @@ elif menu_selecionado == "🔍 Manutenção":
                         cursor.execute("INSERT INTO causadores_erro (causador) VALUES (%s) ON CONFLICT (causador) DO NOTHING", (add_c,))
                         conn.commit(); st.rerun()
                     st.dataframe(pd.read_sql_query("SELECT * FROM causadores_erro", engine), width="stretch")
+
+            elif cat_manut == "Destinações de Sobra":
+                st.write("**Justificativas / Destinações para Sobra de Material**")
+                add_d = st.text_input("Nova Destinação:")
+                if st.button("Salvar Destinação", width="stretch") and add_d:
+                    cursor.execute("INSERT INTO destinacoes_sobra (destinacao) VALUES (%s) ON CONFLICT (destinacao) DO NOTHING", (add_d,))
+                    conn.commit(); st.rerun()
+                st.dataframe(pd.read_sql_query("SELECT destinacao as \"Destinação\" FROM destinacoes_sobra", engine), width="stretch", hide_index=True)
 
 # ------------------------------------------
 # ABA: RELATÓRIOS PDF 
