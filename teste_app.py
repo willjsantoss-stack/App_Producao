@@ -2576,7 +2576,7 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
         
         fases_eng = ["Desenhos do barramento", "Projeto Elétrico", "Lista de Fiação", "Projeto Mecânico", "Separação de Material", "Solicitação de embalagem"]
         # --- NOVA FASE DE DESINTERLIGAÇÃO INCLUÍDA ANTES DA EMBALAGEM ---
-        fases_fab = ["Produção do Barramento", "Impressão de identificadores", "Montagem Mecânica", "Montagem Elétrica", "Testes", "DESINTERLIGAÇÃO/LIMPEZA", "Embalagem"]
+        fases_fab = ["Produção do Barramento", "Impressão de identificadores", "Montagem Mecânica", "Montagem Elétrica", "Testes", "Desinterligação/Limpeza", "Embalagem"]
         
         df_proj = pd.read_sql_query("SELECT nome, especialidade FROM projetistas", engine)
         lista_responsaveis = ["- Selecione -"] + [f"{r['nome']} ({r['especialidade']})" for _, r in df_proj.iterrows()]
