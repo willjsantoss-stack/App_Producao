@@ -2520,8 +2520,16 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                             st.rerun()
 
         with col_mat_dir:
-            st.markdown("#### ⏳ Materiais Aguardando Recebimento (Por Projeto)")
-            df_mats = pd.read_sql_query("SELECT id, wo as so_vinculada, codigo, descricao, quantidade, data_prevista_chegada FROM kanban_materiais WHERE status = 'Faltante'", engine)
+            st.markdown("#### ⏳ Materiais Aguardando Recebimento")
+            
+            # --- ATUALIZADO: JOIN com PROJETOS para pegar o nome do Cliente ---
+            df_mats = pd.read_sql_query("""
+                SELECT m.id, m.wo as so_vinculada, m.codigo, m.descricao, m.quantidade, m.data_prevista_chegada,
+                       p.customer as so_customer
+                FROM kanban_materiais m
+                LEFT JOIN (SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL) p ON m.wo = p.so
+                WHERE m.status = 'Faltante'
+            """, engine)
             
             if not df_mats.empty:
                 # Agrupa e encontra as SOs únicas que têm materiais faltantes
@@ -2537,9 +2545,18 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                             so_falta = sos_faltantes[i + j]
                             df_mats_so = df_mats[df_mats['so_vinculada'] == so_falta]
                             
+                            # --- NOME DO CLIENTE NO CABEÇALHO ---
+                            cliente_nome = df_mats_so['so_customer'].iloc[0] if pd.notna(df_mats_so['so_customer'].iloc[0]) else ""
+                            if cliente_nome:
+                                # Abrevia em 20 caracteres para não quebrar a coluna
+                                cliente_abrev = (cliente_nome[:20] + '...') if len(cliente_nome) > 20 else cliente_nome
+                                titulo_cabecalho = f"SO: {so_falta}<br><span style='font-size: 11px; font-weight: normal;'>{cliente_abrev}</span>"
+                            else:
+                                titulo_cabecalho = f"SO: {so_falta}"
+                            
                             with cols_projetos[j]:
-                                # Cabeçalho da Coluna do Projeto (Vermelho Alerta)
-                                st.markdown(f"<div style='text-align: center; background-color: #f8d7da; color: #721c24; padding: 6px; border-radius: 5px; margin-bottom: 10px; font-weight: bold; border: 1px solid #f5c6cb;'>SO: {so_falta}</div>", unsafe_allow_html=True)
+                                # Cabeçalho da Coluna do Projeto (Vermelho Alerta) COM O NOME
+                                st.markdown(f"<div style='text-align: center; background-color: #f8d7da; color: #721c24; padding: 6px; border-radius: 5px; margin-bottom: 10px; font-weight: bold; border: 1px solid #f5c6cb;'>{titulo_cabecalho}</div>", unsafe_allow_html=True)
                                 
                                 # Cartões de materiais para esta SO específica
                                 for _, row in df_mats_so.iterrows():
