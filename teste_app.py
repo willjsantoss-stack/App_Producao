@@ -2608,7 +2608,6 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
         with tab_sobras:
             st.write("Registre os materiais excedentes durante a montagem para rastreio de custo e reavaliação de engenharia.")
             
-            # --- CONSULTA FEITA ANTES DAS COLUNAS PARA LER NA EDIÇÃO E NA TABELA ---
             df_sobras = pd.read_sql_query("""
                 SELECT s.id, s.so, s.codigo, s.descricao, s.quantidade, s.valor, s.destinacao, s.data_registro,
                        p.customer as so_customer
@@ -2633,7 +2632,8 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                         
                         c_qtd, c_val = st.columns(2)
                         qtd_sobra = c_qtd.number_input("Quantidade*", min_value=1, step=1)
-                        val_sobra = c_val.number_input("Valor Total Estimado (R$)*", min_value=0.01, step=10.0)
+                        # ATUALIZADO: "Valor Unitário" ao invés de "Total"
+                        val_sobra = c_val.number_input("Valor Unitário (R$)*", min_value=0.01, step=10.0)
                         
                         dest_sobra = st.selectbox("Destinação / Justificativa*", ["- Selecione -"] + lista_destinacoes)
                         
@@ -2654,12 +2654,9 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                                 time_sys.sleep(1.5)
                                 st.rerun()
 
-                st.write("") # Espaçamento
-                # --- PAINEL DE EDIÇÃO MOVIDO PARA A COLUNA DA ESQUERDA ---
+                st.write("")
                 with st.expander("✏️ Editar ou Excluir Apontamento de Sobra"):
                     if not df_sobras.empty:
-                        
-                        # 1. Filtra as SOs que possuem sobras cadastradas
                         df_sos_com_sobra = df_sobras[['so', 'so_customer']].drop_duplicates()
                         lista_sos_edit = ["- Selecione o Projeto -"] + sorted([f"{r['so']} - {r['so_customer'] if pd.notna(r['so_customer']) else 'Sem Cliente'}" for _, r in df_sos_com_sobra.iterrows()])
                         
@@ -2669,7 +2666,6 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                             so_clean_edit = so_edit_sel.split(" - ")[0].strip()
                             df_sobras_filtro = df_sobras[df_sobras['so'] == so_clean_edit]
                             
-                            # 2. Mostra apenas os materiais da SO selecionada
                             sobra_edit_list = ["- Selecione o Material -"] + [f"ID {r['id']} | Cód: {r['codigo']} - {r['descricao'][:30]}..." for _, r in df_sobras_filtro.iterrows()]
                             sobra_selecionada = st.selectbox("2. Selecione o registro:", sobra_edit_list, key="item_edit_sobra_sel")
                             
@@ -2694,7 +2690,8 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                                     idx_dest = 0
                                     
                                 c_e3, c_e4 = st.columns(2)
-                                edit_val = c_e3.number_input("Valor Estimado (R$)", value=float(row_sobra['valor']), min_value=0.0, step=10.0, key="ed_val_sobra")
+                                # ATUALIZADO: "Valor Unitário"
+                                edit_val = c_e3.number_input("Valor Unitário (R$)", value=float(row_sobra['valor']), min_value=0.0, step=10.0, key="ed_val_sobra")
                                 edit_dest = c_e4.selectbox("Destinação", list_dest_edit, index=idx_dest, key="ed_dest_sobra")
                                 
                                 st.write("")
@@ -2727,54 +2724,75 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                 st.markdown("#### 📊 Extrato de Sobras (Custos e Destinação)")
                 
                 if not df_sobras.empty:
-                    # --- NOVOS GRÁFICOS DE ANÁLISE DE CUSTO ---
-                    # Garante que o valor é numérico para os cálculos
-                    df_sobras['valor_num'] = pd.to_numeric(df_sobras['valor'], errors='coerce').fillna(0)
+                    # 1. PREPARAÇÃO E CÁLCULO DO VALOR TOTAL
+                    df_sobras['valor_unit_num'] = pd.to_numeric(df_sobras['valor'], errors='coerce').fillna(0)
+                    df_sobras['quantidade_num'] = pd.to_numeric(df_sobras['quantidade'], errors='coerce').fillna(0)
+                    df_sobras['valor_total_calc'] = df_sobras['quantidade_num'] * df_sobras['valor_unit_num']
+                    df_sobras['mes_ano'] = pd.to_datetime(df_sobras['data_registro']).dt.strftime('%m/%Y')
                     
-                    cg1, cg2 = st.columns(2)
+                    # 2. FILTROS INTERATIVOS DE TELA
+                    meses_disp = ["- Todos os Meses -"] + sorted(df_sobras['mes_ano'].unique().tolist(), reverse=True)
+                    projetos_disp = ["- Todos os Projetos -"] + sorted(df_sobras['so'].unique().tolist())
                     
-                    with cg1:
-                        # Gráfico de Barras: Custo por Projeto
-                        df_graf_so = df_sobras.groupby('so')['valor_num'].sum().reset_index()
-                        df_graf_so = df_graf_so.sort_values(by='valor_num', ascending=True).tail(10) # Pega os 10 maiores
-                        df_graf_so['valor_str'] = df_graf_so['valor_num'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    cf1, cf2 = st.columns(2)
+                    filtro_mes = cf1.selectbox("📅 Filtrar por Mês:", meses_disp, key="filtro_mes_sobra_geral")
+                    filtro_proj = cf2.selectbox("📁 Filtrar por Projeto:", projetos_disp, key="filtro_proj_sobra_geral")
+                    
+                    # Aplica os filtros na tabela e gráficos
+                    df_sobras_filt = df_sobras.copy()
+                    if filtro_mes != "- Todos os Meses -":
+                        df_sobras_filt = df_sobras_filt[df_sobras_filt['mes_ano'] == filtro_mes]
+                    if filtro_proj != "- Todos os Projetos -":
+                        df_sobras_filt = df_sobras_filt[df_sobras_filt['so'] == filtro_proj]
+
+                    if not df_sobras_filt.empty:
+                        # --- GRÁFICOS ATUALIZADOS ---
+                        cg1, cg2 = st.columns(2)
                         
-                        fig_so = px.bar(df_graf_so, x='valor_num', y='so', orientation='h', 
-                                        title="Top 10 Projetos (Custo de Sobras)",
-                                        text='valor_str',
-                                        color_discrete_sequence=['#dc3545'])
+                        with cg1:
+                            df_graf_so = df_sobras_filt.groupby('so')['valor_total_calc'].sum().reset_index()
+                            df_graf_so = df_graf_so.sort_values(by='valor_total_calc', ascending=True).tail(10)
+                            df_graf_so['valor_str'] = df_graf_so['valor_total_calc'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                            
+                            fig_so = px.bar(df_graf_so, x='valor_total_calc', y='so', orientation='h', 
+                                            title="Top 10 Projetos (Custo Total R$)",
+                                            text='valor_str',
+                                            color_discrete_sequence=['#dc3545'])
+                            
+                            fig_so.update_traces(textposition='auto', textfont=dict(color='white' if len(df_graf_so) > 0 else 'black'))
+                            fig_so.update_layout(height=280, margin=dict(l=10, r=20, t=30, b=10), xaxis=dict(showticklabels=False, title=""), yaxis=dict(title=""))
+                            st.plotly_chart(fig_so, use_container_width=True)
+                            
+                        with cg2:
+                            df_graf_dest = df_sobras_filt.groupby('destinacao')['valor_total_calc'].sum().reset_index()
+                            
+                            fig_dest = px.pie(df_graf_dest, names='destinacao', values='valor_total_calc', hole=0.45, 
+                                              title="Proporção Financeira por Destinação",
+                                              color_discrete_sequence=px.colors.qualitative.Pastel)
+                            
+                            fig_dest.update_traces(textinfo='percent', textposition='inside', insidetextorientation='radial')
+                            fig_dest.update_layout(height=280, margin=dict(l=10, r=10, t=30, b=10), 
+                                                   legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5))
+                            st.plotly_chart(fig_dest, use_container_width=True)
                         
-                        fig_so.update_traces(textposition='auto', textfont=dict(color='white' if len(df_graf_so) > 0 else 'black'))
-                        fig_so.update_layout(height=280, margin=dict(l=10, r=20, t=30, b=10), xaxis=dict(showticklabels=False, title=""), yaxis=dict(title=""))
-                        st.plotly_chart(fig_so, use_container_width=True)
+                        st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px;'>", unsafe_allow_html=True)
                         
-                    with cg2:
-                        # Gráfico Donut: Custo por Destinação
-                        df_graf_dest = df_sobras.groupby('destinacao')['valor_num'].sum().reset_index()
+                        # --- TABELA CORRIGIDA (Unitário e Total) ---
+                        df_sobras_view = df_sobras_filt.copy()
+                        df_sobras_view['data_registro'] = pd.to_datetime(df_sobras_view['data_registro']).dt.strftime('%d/%m/%Y')
                         
-                        fig_dest = px.pie(df_graf_dest, names='destinacao', values='valor_num', hole=0.45, 
-                                          title="Proporção Financeira por Destinação",
-                                          color_discrete_sequence=px.colors.qualitative.Pastel)
+                        df_sobras_view['v_unit_str'] = df_sobras_view['valor_unit_num'].apply(lambda x: f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        df_sobras_view['v_total_str'] = df_sobras_view['valor_total_calc'].apply(lambda x: f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                         
-                        fig_dest.update_traces(textinfo='percent', textposition='inside', insidetextorientation='radial')
-                        fig_dest.update_layout(height=280, margin=dict(l=10, r=10, t=30, b=10), 
-                                               legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5))
-                        st.plotly_chart(fig_dest, use_container_width=True)
-                    
-                    st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px;'>", unsafe_allow_html=True)
-                    # ------------------------------------------------
-                    
-                    # --- TABELA DE HISTÓRICO ---
-                    df_sobras_view = df_sobras.copy()
-                    df_sobras_view['data_registro'] = pd.to_datetime(df_sobras_view['data_registro']).dt.strftime('%d/%m/%Y')
-                    df_sobras_view['valor'] = df_sobras_view['valor'].apply(lambda x: f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    
-                    cols_rename = {
-                        'so': 'SO', 'so_customer': 'Cliente', 'codigo': 'Código', 'descricao': 'Descrição',
-                        'quantidade': 'Qtd', 'valor': 'Valor Total', 'destinacao': 'Destinação', 'data_registro': 'Data'
-                    }
-                    
-                    st.dataframe(df_sobras_view[['so', 'so_customer', 'codigo', 'descricao', 'quantidade', 'valor', 'destinacao', 'data_registro']].rename(columns=cols_rename), width="stretch", hide_index=True)
+                        cols_rename = {
+                            'so': 'SO', 'so_customer': 'Cliente', 'codigo': 'Código', 'descricao': 'Descrição',
+                            'quantidade': 'Qtd', 'v_unit_str': 'V. Unitário', 'v_total_str': 'Custo Total', 
+                            'destinacao': 'Destinação', 'data_registro': 'Data'
+                        }
+                        
+                        st.dataframe(df_sobras_view[['so', 'so_customer', 'codigo', 'descricao', 'quantidade', 'v_unit_str', 'v_total_str', 'destinacao', 'data_registro']].rename(columns=cols_rename), width="stretch", hide_index=True)
+                    else:
+                        st.warning("Nenhum dado encontrado para os filtros aplicados.")
                 else:
                     st.info("Nenhuma sobra de material registrada até o momento.")
     # ==========================================
