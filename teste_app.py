@@ -2976,14 +2976,14 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                         prod_nome = row['wo_product'] if pd.notna(row['wo_product']) else "Atividade Avulsa"
                         st.caption(f"{prod_nome}")
                         
-                        # --- CORES DOS NOVOS STATUS (Cinza, Azul, Laranja, Vermelho) ---
+                        # --- CORES DOS STATUS ATUALIZADAS (Amarelo para Espera) ---
                         status_c = row['card_status']
                         if status_c in ['Não Iniciado', 'Aguardando Embalagem']:
                             cor_card = "#6c757d" # Cinza
                         elif status_c == 'Em Andamento':
                             cor_card = "#004a99" # Azul
-                        elif status_c in ['Esperando Mecânica', 'Esperando Elétrica']:
-                            cor_card = "#fd7e14" # Laranja (Alerta leve)
+                        elif status_c in ['Aguardando Mecânica', 'Aguardando Elétrica']:
+                            cor_card = "#ffcc00" # Amarelo escuro (Destaque visual)
                         else:
                             cor_card = "#dc3545" # Vermelho (Parada)
                             
@@ -2995,24 +2995,11 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                         else:
                             st.caption("⏳ Horário não iniciado")
                         
-                        # --- NOVO MENU DE AÇÕES ---
-                        opcoes_acao = ["- Selecione a Ação -", "Mover para Próxima Fase", "▶️ Iniciar / Retomar", "⏸️ Sinalizar Parada / Espera", "✅ Finalizar Etapa", "🏁 Finalizar WO (Encerrar)", "🗑️ Excluir Cartão"]
+                        # --- MENU DE AÇÕES LIMPO (Sem transição de fase) ---
+                        opcoes_acao = ["- Selecione a Ação -", "▶️ Iniciar / Retomar", "⏸️ Sinalizar Parada / Espera", "✅ Finalizar Etapa", "🏁 Finalizar WO (Encerrar)", "🗑️ Excluir Cartão"]
                         acao = st.selectbox("Ações:", opcoes_acao, key=f"acao_{row['id']}", label_visibility="collapsed")
                         
-                        if acao == "Mover para Próxima Fase":
-                            dest = st.selectbox("Mover para:", fases_fab, key=f"dest_{row['id']}")
-                            if st.button("Mover", key=f"btn_mov_{row['id']}", use_container_width=True):
-                                # 1. Finaliza a etapa atual
-                                cursor.execute("UPDATE kanban_fases SET data_fim = CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', status = 'Concluído' WHERE id = %s", (row['id'],))
-                                
-                                # 2. Cria a nova etapa com o status correto (Congelado até iniciarem)
-                                so_val = row['so'] if pd.notna(row['so']) else 'AVULSO'
-                                novo_status = 'Aguardando Embalagem' if dest == 'Embalagem' else 'Não Iniciado'
-                                
-                                cursor.execute("INSERT INTO kanban_fases (so, wo, categoria, fase, responsavel, status) VALUES (%s, %s, 'Fábrica', %s, 'Equipe de Fábrica', %s)", (so_val, row['wo'], dest, novo_status))
-                                conn.commit(); st.rerun()
-
-                        elif acao == "▶️ Iniciar / Retomar":
+                        if acao == "▶️ Iniciar / Retomar":
                             if st.button("Executar Ação", key=f"btn_ini_{row['id']}", use_container_width=True):
                                 if pd.isna(row['data_inicio']):
                                     cursor.execute("UPDATE kanban_fases SET status = 'Em Andamento', data_inicio = CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo' WHERE id = %s", (row['id'],))
@@ -3024,7 +3011,8 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                                 conn.commit(); st.rerun()
                                 
                         elif acao == "⏸️ Sinalizar Parada / Espera":
-                            motivo = st.selectbox("Motivo:", ["Falta de Material", "Esperando Mecânica", "Esperando Elétrica", "Aguardando Embalagem", "Parada Geral"], key=f"motivo_{row['id']}")
+                            # Opções atualizadas para bater com a cor amarela
+                            motivo = st.selectbox("Motivo:", ["Falta de Material", "Aguardando Mecânica", "Aguardando Elétrica", "Aguardando Embalagem", "Parada Geral"], key=f"motivo_{row['id']}")
                             if st.button("Confirmar", key=f"btn_par_{row['id']}", use_container_width=True):
                                 
                                 status_salvar = "Parado (Falta Mat.)" if motivo == "Falta de Material" else motivo
