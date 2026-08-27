@@ -2801,9 +2801,9 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
     with tab_kanban:
         st.markdown("### 📋 Gestão Visual de Fluxo e Marcos")
         
-        fases_eng = ["Desenhos do Barramento", "Projeto Elétrico", "Lista de Fiação", "Projeto Mecânico", "Separação de Material", "Solicitação de Embalagem"]
-        # --- NOVA FASE DE DESINTERLIGAÇÃO INCLUÍDA ANTES DA EMBALAGEM ---
-        fases_fab = ["Produção do Barramento", "Impressão de Identificadores", "Montagem Mecânica", "Montagem Elétrica", "Testes", "Desinterligação/Limpeza", "Embalagem"]
+        # --- ATUALIZADO: "Solicitação de embalagem" removida ---
+        fases_eng = ["Desenhos do barramento", "Projeto Elétrico", "Lista de Fiação", "Projeto Mecânico", "Separação de Material"]
+        fases_fab = ["Produção do Barramento", "Impressão de identificadores", "Montagem Mecânica", "Montagem Elétrica", "Testes", "DESINTERLIGAÇÃO/LIMPEZA", "Embalagem"]
         
         df_proj = pd.read_sql_query("SELECT nome, especialidade FROM projetistas", engine)
         lista_responsaveis = ["- Selecione -"] + [f"{r['nome']} ({r['especialidade']})" for _, r in df_proj.iterrows()]
@@ -2909,10 +2909,13 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                     if so_fab_sel != "- Nenhum projeto ativo -" and wo_fab_sel != "- Selecione a WO -" and wo_fab_sel != "- Aguardando Projeto -" and fase_fab_sel != "- Selecione -":
                         wo_clean_fab = wo_fab_sel.split(" - ")[0].strip()
                         
+                        # --- INSERÇÃO INICIAL COM STATUS ADEQUADO ---
+                        status_inicial = "Aguardando Embalagem" if fase_fab_sel == "Embalagem" else "Não Iniciado"
+                        
                         cursor.execute("""
                             INSERT INTO kanban_fases (so, wo, categoria, fase, responsavel, status)
-                            VALUES (%s, %s, 'Fábrica', %s, 'Equipe de Fábrica', 'Não Iniciado')
-                        """, (so_clean_fab, wo_clean_fab, fase_fab_sel))
+                            VALUES (%s, %s, 'Fábrica', %s, 'Equipe de Fábrica', %s)
+                        """, (so_clean_fab, wo_clean_fab, fase_fab_sel, status_inicial))
                         conn.commit()
                         
                         st.success(f"✔️ Cartão Kanban criado na fase {fase_fab_sel}!")
@@ -2929,26 +2932,19 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                 if st.button("➕ Criar Cartão Kanban (Avulso)", type="primary", use_container_width=True):
                     if so_avulsa_sel != "- Nenhum projeto ativo -" and wo_avulsa_txt.strip() and fase_avulsa_sel != "- Selecione -":
                         so_limpa = so_avulsa_sel.split(" - ")[0].strip()
+                        
+                        status_inicial = "Aguardando Embalagem" if fase_avulsa_sel == "Embalagem" else "Não Iniciado"
+                        
                         cursor.execute("""
                             INSERT INTO kanban_fases (so, wo, categoria, fase, responsavel, status)
-                            VALUES (%s, %s, 'Fábrica', %s, 'Equipe de Fábrica', 'Não Iniciado')
-                        """, (so_limpa, wo_avulsa_txt.strip(), fase_avulsa_sel))
+                            VALUES (%s, %s, 'Fábrica', %s, 'Equipe de Fábrica', %s)
+                        """, (so_limpa, wo_avulsa_txt.strip(), fase_avulsa_sel, status_inicial))
                         conn.commit()
                         st.success("Cartão avulso criado e vinculado à SO com sucesso!")
                         time_sys.sleep(1.5); st.rerun()
                     else:
                         st.error("Preencha o Projeto, a Identificação e a Fase.")
-        
-        # --- FORÇA A ATUALIZAÇÃO DO BANCO DE DADOS ---
-        try:
-            cursor.execute("ALTER TABLE kanban_fases ADD COLUMN IF NOT EXISTS so TEXT;")
-            cursor.execute("ALTER TABLE kanban_fases ADD COLUMN IF NOT EXISTS data_prevista DATE;")
-            conn.commit()
-        except Exception:
-            conn.rollback()
-        # ------------------------------------------------------------------------------
 
-        # --- Trazendo também o NOME DO CLIENTE para a Fábrica ---
         df_kanban_fab = pd.read_sql_query("""
             SELECT k.id, k.so, k.wo, k.fase, k.responsavel, k.data_inicio, k.status as card_status,
                    p_wo.product_name as wo_product, p_wo.status_producao as wo_status,
@@ -2969,7 +2965,6 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                     with st.container(border=True):
                         st.markdown(f"<h5 style='margin-bottom:0px; color:#28a745;'>{row['wo']}</h5>", unsafe_allow_html=True)
                         
-                        # --- PROJETO COM NOME ABREVIADO ---
                         if row['so'] and row['so'] != 'AVULSO':
                             cliente_nome = row['so_customer'] if pd.notna(row['so_customer']) else ""
                             if cliente_nome:
@@ -2981,15 +2976,43 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                         prod_nome = row['wo_product'] if pd.notna(row['wo_product']) else "Atividade Avulsa"
                         st.caption(f"{prod_nome}")
                         
-                        cor_card = "#6c757d" if row['card_status'] == 'Não Iniciado' else ("#004a99" if row['card_status'] == 'Em Andamento' else "#dc3545")
-                        st.markdown(f"**Status:** <span style='color:{cor_card}; font-weight:bold;'>{row['card_status']}</span>", unsafe_allow_html=True)
+                        # --- CORES DOS NOVOS STATUS (Cinza, Azul, Laranja, Vermelho) ---
+                        status_c = row['card_status']
+                        if status_c in ['Não Iniciado', 'Aguardando Embalagem']:
+                            cor_card = "#6c757d" # Cinza
+                        elif status_c == 'Em Andamento':
+                            cor_card = "#004a99" # Azul
+                        elif status_c in ['Esperando Mecânica', 'Esperando Elétrica']:
+                            cor_card = "#fd7e14" # Laranja (Alerta leve)
+                        else:
+                            cor_card = "#dc3545" # Vermelho (Parada)
+                            
+                        st.markdown(f"**Status:** <span style='color:{cor_card}; font-weight:bold;'>{status_c}</span>", unsafe_allow_html=True)
                         
-                        # (DATA DE INÍCIO REMOVIDA PARA LIMPAR O CARTÃO)
+                        if pd.notna(row['data_inicio']):
+                            d_ini = pd.to_datetime(row['data_inicio']).strftime('%d/%m/%Y %H:%M')
+                            st.caption(f"⏳ Início: {d_ini}")
+                        else:
+                            st.caption("⏳ Horário não iniciado")
                         
-                        opcoes_acao = ["- Selecione a Ação -", "▶️ Iniciar / Retomar", "⏸️ Parar Cartão", "✅ Finalizar Cartão", "🏁 Finalizar WO (Encerrar)", "🗑️ Excluir Cartão"]
+                        # --- NOVO MENU DE AÇÕES ---
+                        opcoes_acao = ["- Selecione a Ação -", "Mover para Próxima Fase", "▶️ Iniciar / Retomar", "⏸️ Sinalizar Parada / Espera", "✅ Finalizar Etapa", "🏁 Finalizar WO (Encerrar)", "🗑️ Excluir Cartão"]
                         acao = st.selectbox("Ações:", opcoes_acao, key=f"acao_{row['id']}", label_visibility="collapsed")
                         
-                        if acao == "▶️ Iniciar / Retomar":
+                        if acao == "Mover para Próxima Fase":
+                            dest = st.selectbox("Mover para:", fases_fab, key=f"dest_{row['id']}")
+                            if st.button("Mover", key=f"btn_mov_{row['id']}", use_container_width=True):
+                                # 1. Finaliza a etapa atual
+                                cursor.execute("UPDATE kanban_fases SET data_fim = CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', status = 'Concluído' WHERE id = %s", (row['id'],))
+                                
+                                # 2. Cria a nova etapa com o status correto (Congelado até iniciarem)
+                                so_val = row['so'] if pd.notna(row['so']) else 'AVULSO'
+                                novo_status = 'Aguardando Embalagem' if dest == 'Embalagem' else 'Não Iniciado'
+                                
+                                cursor.execute("INSERT INTO kanban_fases (so, wo, categoria, fase, responsavel, status) VALUES (%s, %s, 'Fábrica', %s, 'Equipe de Fábrica', %s)", (so_val, row['wo'], dest, novo_status))
+                                conn.commit(); st.rerun()
+
+                        elif acao == "▶️ Iniciar / Retomar":
                             if st.button("Executar Ação", key=f"btn_ini_{row['id']}", use_container_width=True):
                                 if pd.isna(row['data_inicio']):
                                     cursor.execute("UPDATE kanban_fases SET status = 'Em Andamento', data_inicio = CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo' WHERE id = %s", (row['id'],))
@@ -3000,14 +3023,18 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
                                     cursor.execute("UPDATE projetos SET status_producao = 'Em Montagem' WHERE wo = %s", (row['wo'],))
                                 conn.commit(); st.rerun()
                                 
-                        elif acao == "⏸️ Parar Cartão":
-                            if st.button("Executar Ação", key=f"btn_par_{row['id']}", use_container_width=True):
-                                cursor.execute("UPDATE kanban_fases SET status = 'Parado' WHERE id = %s", (row['id'],))
-                                if row['so'] != 'AVULSO':
+                        elif acao == "⏸️ Sinalizar Parada / Espera":
+                            motivo = st.selectbox("Motivo:", ["Falta de Material", "Esperando Mecânica", "Esperando Elétrica", "Aguardando Embalagem", "Parada Geral"], key=f"motivo_{row['id']}")
+                            if st.button("Confirmar", key=f"btn_par_{row['id']}", use_container_width=True):
+                                
+                                status_salvar = "Parado (Falta Mat.)" if motivo == "Falta de Material" else motivo
+                                cursor.execute("UPDATE kanban_fases SET status = %s WHERE id = %s", (status_salvar, row['id']))
+                                
+                                if motivo == "Falta de Material" and row['so'] != 'AVULSO':
                                     cursor.execute("UPDATE projetos SET status_producao = 'Parado (Material)' WHERE wo = %s", (row['wo'],))
                                 conn.commit(); st.rerun()
                                 
-                        elif acao == "✅ Finalizar Cartão":
+                        elif acao == "✅ Finalizar Etapa":
                             if st.button("Executar Ação", key=f"btn_conc_{row['id']}", use_container_width=True):
                                 cursor.execute("UPDATE kanban_fases SET data_fim = CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', status = 'Concluído' WHERE id = %s", (row['id'],))
                                 conn.commit(); st.rerun()
