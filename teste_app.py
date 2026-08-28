@@ -4317,3 +4317,4 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                 except Exception as e:
                     st.error(f"❌ Erro na geração do PDF: {e}")
 # Teste de conexão com o GitHub
+# Teste de conexão com o GitHub
