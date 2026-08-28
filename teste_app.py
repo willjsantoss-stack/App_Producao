@@ -4308,12 +4308,32 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
             df_agrupado_motivos = df_graf_motivos.groupby('Motivo')['Impacto Financeiro (R$)'].sum().reset_index()
             df_agrupado_motivos = df_agrupado_motivos.sort_values(by='Impacto Financeiro (R$)', ascending=True)
             
-            fig_mot = px.bar(df_agrupado_motivos, x='Impacto Financeiro (R$)', y='Motivo', orientation='h', 
-                             title="Soma de Impacto por Motivo Classificado", 
-                             color='Impacto Financeiro (R$)', color_continuous_scale=px.colors.diverging.RdBu[::-1])
+            # Formatação do texto arredondado
+            df_agrupado_motivos['text_fmt'] = df_agrupado_motivos['Impacto Financeiro (R$)'].apply(lambda x: f"R$ {x:+,.0f}")
             
-            fig_mot.update_traces(texttemplate='R$ %{x:+,.2f}', textposition='outside')
-            fig_mot.update_layout(yaxis=dict(title=""), xaxis=dict(title="Impacto Financeiro (R$)"), margin=dict(t=40, b=10), coloraxis_showscale=False)
+            # Criando a lista de cores no mesmo padrão do PDF (Verde para Economia, Vermelho para Prejuízo)
+            cores_plotly = ['#d62728' if val > 0 else '#2ca02c' for val in df_agrupado_motivos['Impacto Financeiro (R$)']]
+            
+            # Desenhando o gráfico com Go (Graph Objects) para ter controle absoluto das cores
+            fig_mot = go.Figure(go.Bar(
+                x=df_agrupado_motivos['Impacto Financeiro (R$)'],
+                y=df_agrupado_motivos['Motivo'],
+                orientation='h',
+                text=df_agrupado_motivos['text_fmt'],
+                textposition='outside',
+                marker_color=cores_plotly
+            ))
+            
+            # Adicionando a linha do Zero central como no PDF
+            fig_mot.add_vline(x=0, line_width=1, line_dash="dash", line_color="black")
+            
+            fig_mot.update_layout(
+                title="Soma de Impacto por Motivo Classificado", 
+                yaxis=dict(title=""), 
+                xaxis=dict(title="Impacto Financeiro (R$)"), 
+                margin=dict(t=40, b=10, l=150)
+            )
+            
             st.plotly_chart(fig_mot, use_container_width=True)
         else:
             st.info("💡 Classifique os motivos nas tabelas acima para gerar o gráfico executivo de Causas Raízes.")
