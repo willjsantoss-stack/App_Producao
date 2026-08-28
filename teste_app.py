@@ -4029,7 +4029,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res['Custo Real Total'] = df_res.apply(lambda r: r['Financial cost amount'] if r['Financial cost amount'] != 0 else r['Physical cost amount'], axis=1)
                         df_res['Custo Unitário'] = df_res.apply(lambda r: abs(r['Custo Real Total'] / r['Quantity']) if r['Quantity'] != 0 else r['Cost price per unit'], axis=1)
                         
-                        # --- MATEMÁTICA PURA (+ Positivo: Adicionado/Excedeu | - Negativo: Removido/Economizou) ---
+                        # --- MATEMÁTICA PURA (Premissas Garantidas) ---
                         df_res['Desvio Engenharia'] = df_res['Consumption per lot size'] - df_res['qtd_ini']
                         df_res['Desvio Fábrica'] = df_res['Quantity'] - df_res['Consumption per lot size'] 
                         
@@ -4053,7 +4053,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
                         df_res['Qtd Divergência'] = df_res.apply(calcular_qtd_divergencia, axis=1)
                         
-                        # CORREÇÃO: O Impacto agora herda o sinal matemático da divergência
+                        # --- CORREÇÃO FINANCEIRA: O Custo acompanha fielmente o sinal da quantidade ---
                         def calcular_impacto(r):
                             return r['Qtd Divergência'] * r['Custo Unitário']
                                 
@@ -4082,9 +4082,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         custo_kbn = df_final[df_final['Eh_Kanban'] == True]['Custo Real Total'].abs().sum()
         pct_kbn = (custo_kbn / custo_total_mat * 100) if custo_total_mat > 0 else 0
         
-        # Como o impacto agora tem sinal, usamos abs() ou somamos direto onde já sabemos que é positivo/negativo
+        # Como as economias agora são números negativos reais, usamos a soma simples
         custo_exc = df_final[df_final['Status'].isin(['Fábrica: Excedente Operacional', 'Alerta: Consumido após Remoção'])]['Impacto Financeiro (R$)'].sum()
-        custo_eco = abs(df_final[df_final['Status'] == 'Fábrica: Economia Operacional']['Impacto Financeiro (R$)'].sum()) # Deixa positivo apenas para exibição no KPI
+        custo_eco = df_final[df_final['Status'] == 'Fábrica: Economia Operacional']['Impacto Financeiro (R$)'].sum()
         
         # Consolida o impacto financeiro LÍQUIDO da Engenharia (+ Adições, - Remoções)
         custo_eng_liq = df_final[df_final['Status'].str.contains('Engenharia')]['Impacto Financeiro (R$)'].sum()
@@ -4096,9 +4096,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Custo Total Material", f"R$ {custo_total_mat:,.2f}")
         c2.metric("Proporção Kanban", f"R$ {custo_kbn:,.2f}", f"{pct_kbn:.1f}% do Custo Mat.", delta_color="off")
-        c3.metric("Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", f"Economia: R$ {custo_eco:,.2f}", delta_color="inverse")
-        # Mostra o sinal explícito se a engenharia encareceu (+) ou barateou (-) a obra
-        c4.metric("Diverg. LÍQUIDA Engenharia", f"R$ {custo_eng_liq:+,.2f}", "Adições e Remoções", delta_color="off")
+        c3.metric("Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", f"Economia: R$ {custo_eco:+,.2f}", delta_color="inverse")
+        c4.metric("Diverg. LÍQUIDA Engenharia", f"R$ {custo_eng_liq:+,.2f}", "Balanço: Adições vs Remoções", delta_color="off")
 
         df_graficos = df_final[df_final['Status'] != 'Ignorado (Mão de Obra / Serviço)'].copy()
         
@@ -4116,10 +4115,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                 st.plotly_chart(fig_pie, use_container_width=True)
             
         with cg2:
-            # CORREÇÃO CRÍTICA: Filtra APENAS os prejuízos reais (valores positivos de excedente e adição)
+            # Filtra apenas os Ofensores (prejuízos reais positivos) para não poluir o gráfico
             mask_ofensores = df_graficos['Status'].isin(['Fábrica: Excedente Operacional', 'Engenharia: Adicionado no Escopo', 'Alerta: Consumido após Remoção'])
             df_bar = df_graficos[mask_ofensores]
-            df_bar = df_bar.sort_values(by='Impacto Financeiro (R$)', ascending=True).tail(10) # Pega os maiores ofensores reais
+            df_bar = df_bar.sort_values(by='Impacto Financeiro (R$)', ascending=True).tail(10) 
             
             if not df_bar.empty and df_bar['Impacto Financeiro (R$)'].sum() > 0:
                 df_bar['Item'] = df_bar['Item'].astype(str)
@@ -4132,13 +4131,13 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
         st.markdown("---")
         st.markdown("### 📋 Classificação de Causa Raiz (Motivo)")
-        st.write("Antes de gerar o relatório, verifique as quantidades e classifique a causa raiz. Sinais **Positivos (+)** indicam Adição/Desperdício, Sinais **Negativos (-)** indicam Remoção/Economia.")
+        st.write("Antes de gerar o relatório, verifique as quantidades. Sinais **Positivos (+)** indicam Adição/Desperdício, Sinais **Negativos (-)** indicam Remoção/Economia.")
         
         mask_divergencias = df_final['Status'].str.contains('Fábrica:|Engenharia:|Alerta:')
         df_editavel = df_final[mask_divergencias].copy()
         
         if not df_editavel.empty:
-            # Cria uma coluna temporária para ordenar os maiores impactos (absolutos) primeiro, independentemente de ser economia ou perda
+            # Cria coluna absoluta apenas para ordenar a tabela de edição do maior para o menor impacto (independente de ser + ou -)
             df_edit_display = df_editavel[['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
             df_edit_display['Impacto_Abs'] = df_edit_display['Impacto Financeiro (R$)'].abs()
             df_edit_display = df_edit_display.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
@@ -4153,7 +4152,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     "Descrição": st.column_config.TextColumn(disabled=True),
                     "Status": st.column_config.TextColumn(disabled=True),
                     "Qtd Divergência": st.column_config.NumberColumn("Saldo Qtd", format="%+.2f", disabled=True),
-                    "Impacto Financeiro (R$)": st.column_config.NumberColumn("Valor Diferença (R$)", format="R$ %+.2f", disabled=True), # Mostra explícito se é + ou -
+                    "Impacto Financeiro (R$)": st.column_config.NumberColumn("Valor Diferença (R$)", format="R$ %+.2f", disabled=True),
                     "Motivo": st.column_config.SelectboxColumn("Causa Raiz (Selecione)", options=opcoes_motivo, required=True)
                 },
                 use_container_width=True,
@@ -4220,7 +4219,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         ["Custo Total Material", f"R$ {custo_total_mat:,.2f}", "Material Aplicado Geral"],
                         ["Custo Kanban", f"R$ {custo_kbn:,.2f}", f"{pct_kbn:.1f}% do Custo Material"],
                         ["Custo Excedente (Fábrica)", f"R$ {custo_exc:,.2f}", "Desperdício / Refugo Operacional"],
-                        ["Economia (Fábrica)", f"R$ {custo_eco:,.2f}", "Abaixo do orçado pela Engenharia"],
+                        ["Economia (Fábrica)", f"R$ {custo_eco:+,.2f}", "Abaixo do orçado pela Engenharia"],
                         ["Diverg. Líq. Engenharia", f"R$ {custo_eng_liq:+,.2f}", "Balanço Adições vs Remoções"]
                     ]
                     
@@ -4272,14 +4271,12 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         if df_sub.empty: return
                         story.append(Paragraph(f"<b>Tabela: {titulo}</b>", styles['Heading3']))
                         
-                        # Ordena pelo tamanho do impacto (absoluto) mas mantém o sinal na exibição
                         df_sub['Impacto_Abs'] = df_sub['Impacto Financeiro (R$)'].abs()
                         df_top = df_sub.sort_values(by='Impacto_Abs', ascending=False).head(20)
                         tot_val = df_sub['Impacto Financeiro (R$)'].sum()
                         
                         t_data = [["Item", "Descrição", "Saldo Qtd", "Valor Diferença (R$)", "Motivo"]]
                         for _, r in df_top.iterrows():
-                            # O sinal '+' e '-' agora aparece colado na moeda perfeitamente!
                             t_data.append([str(r['Item']), str(r['Descrição'])[:25], f"{r['Qtd Divergência']:+.2f}", f"R$ {r['Impacto Financeiro (R$)']:+,.2f}", str(r.get('Motivo', '-'))])
                         t_data.append(['-', 'TOTAL GERAL DA CATEGORIA', '-', f"R$ {tot_val:+,.2f}", '-'])
                         
