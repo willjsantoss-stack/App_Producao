@@ -4094,23 +4094,35 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         cg1, cg2 = st.columns(2)
         with cg1:
             df_pie = df_graficos.groupby('Status')['Item'].count().reset_index()
-            fig_pie = px.pie(df_pie, names='Status', values='Item', hole=0.45, title="Conformidade Geral de Itens")
             
-            # ATUALIZAÇÃO: Exibe apenas o percentual e cria uma legenda limpa na parte de baixo
-            fig_pie.update_traces(textposition='auto', textinfo='percent')
-            fig_pie.update_layout(
-                showlegend=True, 
-                legend=dict(
-                    orientation="h", 
-                    yanchor="top", 
-                    y=-0.1, 
-                    xanchor="center", 
-                    x=0.5,
-                    title="" # Remove o título "Status" da legenda para economizar espaço
-                ),
-                margin=dict(t=40, b=20)
-            )
-            st.plotly_chart(fig_pie, use_container_width=True)
+            if not df_pie.empty:
+                # 1. Calcula a porcentagem matemática
+                total_itens = df_pie['Item'].sum()
+                df_pie['Porcentagem'] = (df_pie['Item'] / total_itens * 100).round(1)
+                
+                # 2. Cria o novo rótulo juntando o Status com o valor de %
+                df_pie['Rotulo_Personalizado'] = df_pie['Status'] + " (" + df_pie['Porcentagem'].astype(str) + "%)"
+                
+                # 3. Gera o gráfico usando o novo rótulo
+                fig_pie = px.pie(df_pie, names='Rotulo_Personalizado', values='Item', hole=0.45, title="Conformidade Geral de Itens")
+                
+                # 4. Mantém o visual limpo e joga a legenda para a direita (como no seu desenho)
+                fig_pie.update_traces(textposition='inside', textinfo='percent')
+                fig_pie.update_layout(
+                    showlegend=True, 
+                    legend=dict(
+                        orientation="v",      # Legenda na Vertical
+                        yanchor="middle", 
+                        y=0.5,                # Centralizado verticalmente
+                        xanchor="left", 
+                        x=1.0,                # Empurrado totalmente para a Direita
+                        title="" 
+                    ),
+                    margin=dict(t=40, b=20, l=0, r=0)
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+            else:
+                st.info("Sem itens para exibir no gráfico.")
             
         with cg2:
             # Seleciona apenas os ofensores de custo extra
