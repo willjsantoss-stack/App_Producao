@@ -3286,7 +3286,13 @@ elif menu_selecionado == "🔍 Manutenção":
         with st.container(border=True):
             if cat_manut == "📥 Importação de Excel (Em Lote)":
                 st.subheader("📤 Importação via Excel")
-                op_c = st.selectbox("Qual tabela deseja atualizar via Excel?", ["WOs/SOs", "Colaboradores", "Férias", "Calendário Lucy", "Feriados", "Tipos de Erro", "Causadores de Erro"])
+                
+                # ADICIONADO: "Itens Kanban" e "Fáscias" na lista de opções
+                op_c = st.selectbox("Qual tabela deseja atualizar via Excel?", [
+                    "WOs/SOs", "Colaboradores", "Férias", "Calendário Lucy", 
+                    "Feriados", "Tipos de Erro", "Causadores de Erro", 
+                    "Itens Kanban", "Fáscias (Itens Ignorados)"
+                ])
                 
                 guias = {
                     "WOs/SOs": ["so", "customer", "wo", "item", "product_name", "qtde", "horas_vendidas", "linha"],
@@ -3295,7 +3301,9 @@ elif menu_selecionado == "🔍 Manutenção":
                     "Calendário Lucy": ["start_date", "end_date", "std_month", "lucy_month", "week"],
                     "Feriados": ["data", "descricao"],
                     "Tipos de Erro": ["erro"],
-                    "Causadores de Erro": ["causador"]
+                    "Causadores de Erro": ["causador"],
+                    "Itens Kanban": ["codigo", "descricao"],             # <--- NOVA GUIA (Planilha A)
+                    "Fáscias (Itens Ignorados)": ["codigo", "descricao", "motivo"] # <--- NOVA GUIA (Planilha B)
                 }
                 
                 colunas_de_data = {
@@ -3316,6 +3324,11 @@ elif menu_selecionado == "🔍 Manutenção":
                 if f_xlsx and st.button("🚀 EXECUTAR IMPORTAÇÃO", width="stretch"):
                     try:
                         df_up = pd.read_excel(f_xlsx)
+                        
+                        # Limpa espaços em branco nos nomes das colunas da planilha para evitar erros
+                        df_up.columns = df_up.columns.str.strip()
+                        
+                        # Força o renomeio para o padrão do banco
                         df_up.columns = guias[op_c]
                         
                         if op_c in colunas_de_data:
@@ -3325,17 +3338,28 @@ elif menu_selecionado == "🔍 Manutenção":
                             "WOs/SOs": ("projetos", True), "Colaboradores": ("colaboradores", False), 
                             "Férias": ("ferias_colaboradores", False), "Calendário Lucy": ("calendario_lucy", False),
                             "Feriados": ("feriados", False), "Tipos de Erro": ("tipos_erro", False),
-                            "Causadores de Erro": ("causadores_erro", False)
+                            "Causadores de Erro": ("causadores_erro", False),
+                            "Itens Kanban": ("itens_kanban", False),                       # <--- MAPEAR TABELA
+                            "Fáscias (Itens Ignorados)": ("itens_ignorados_auditoria", False) # <--- MAPEAR TABELA
                         }
                         
                         t_name, has_status = target[op_c]
                         if has_status: df_up['status_producao'] = 'Não iniciada'
                         if op_c == "WOs/SOs": df_up['item'] = ""
                         
+                        # Remove duplicatas da própria planilha antes de enviar (Previne erros do banco)
+                        if op_c in ["Itens Kanban", "Fáscias (Itens Ignorados)"]:
+                            df_up['codigo'] = df_up['codigo'].astype(str).str.strip()
+                            df_up = df_up.drop_duplicates(subset=['codigo'])
+                        
                         df_up.to_sql(t_name, engine, if_exists='append', index=False)
                         st.success(f"✔️ Carga de '{op_c}' concluída com sucesso no banco de dados!")
+                        
                     except Exception as e:
-                        st.error(f"❌ Erro na importação. Verifique se as colunas estão corretas. Detalhe técnico: {e}")
+                        if "UniqueViolation" in str(e) or "duplicate key" in str(e).lower():
+                            st.error("❌ Erro: Você tentou importar códigos que JÁ ESTÃO cadastrados no banco de dados. O sistema bloqueou para evitar duplicatas.")
+                        else:
+                            st.error(f"❌ Erro na importação. Verifique se as colunas estão corretas. Detalhe técnico: {e}")
 
             elif cat_manut == "Parâmetros de Jornada":
                 st.write("**Histórico de Vigências de Jornada**")
