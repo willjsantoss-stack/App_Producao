@@ -3980,18 +3980,34 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_r.columns = df_r.columns.str.strip()
                         df_r['Item number'] = df_r['Item number'].astype(str).str.strip()
                         
-                        # --- NOVIDADE: FILTRO INTELIGENTE DE DEVOLUÇÕES (RETURN LOT ID) ---
-                        # Se a linha tem lote de devolução, ela é um estorno do ERP e não deve ser somada!
-                        if 'Return lot ID' in df_r.columns:
-                            df_r = df_r[df_r['Return lot ID'].isna() | (df_r['Return lot ID'].astype(str).str.strip() == '') | (df_r['Return lot ID'].astype(str).str.strip().str.lower() == 'nan')]
+                        if 'Return lot ID' not in df_r.columns:
+                            df_r['Return lot ID'] = None
+
+                        # --- O FILTRO DE OURO (LÓGICA ERP) ---
+                        def is_true_consumption(row):
+                            qty = pd.to_numeric(row['Quantity'], errors='coerce')
+                            if pd.isna(qty): return False
+                            
+                            # 1. Consumo real de componentes ou sub-montagens (Negativo no ERP)
+                            if qty < 0: return True
+                                
+                            # 2. Devolução de material para o estoque (Positivo, COM Return Lot ID)
+                            if qty > 0 and pd.notna(row['Return lot ID']) and str(row['Return lot ID']).strip() not in ['', 'nan', 'None']:
+                                return True
+                                
+                            # 3. Produção de sub-montagens/produtos acabados (Positivo e SEM Return Lot ID) -> IGNORA
+                            return False
+
+                        df_r = df_r[df_r.apply(is_true_consumption, axis=1)].copy()
+
+                        # Padroniza: Consumo (+), Devolução (-)
+                        df_r['Quantity'] = pd.to_numeric(df_r['Quantity'], errors='coerce').fillna(0) * -1
                         
-                        # CORREÇÃO DO ERP: Transforma baixas de estoque negativas em consumo positivo
-                        for col_num in ['Quantity', 'Financial cost amount', 'Physical cost amount']:
-                            if col_num in df_r.columns:
-                                df_r[col_num] = pd.to_numeric(df_r[col_num], errors='coerce').fillna(0).abs()
-                        
-                        if 'Physical cost amount' not in df_r.columns: 
-                            df_r['Physical cost amount'] = 0.0
+                        # Custos acompanham em absoluto para não zerar no saldo
+                        if 'Physical cost amount' not in df_r.columns: df_r['Physical cost amount'] = 0.0
+                        if 'Financial cost amount' not in df_r.columns: df_r['Financial cost amount'] = 0.0
+                        df_r['Financial cost amount'] = pd.to_numeric(df_r['Financial cost amount'], errors='coerce').fillna(0).abs()
+                        df_r['Physical cost amount'] = pd.to_numeric(df_r['Physical cost amount'], errors='coerce').fillna(0).abs()
 
                         df_real_agg = df_r.groupby('Item number').agg({'Quantity': 'sum', 'Financial cost amount': 'sum', 'Physical cost amount': 'sum'}).reset_index()
 
@@ -4032,13 +4048,20 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                             if col in df_res.columns: df_res[col] = pd.to_numeric(df_res[col], errors='coerce').fillna(0).astype(float)
 
                         df_res['Custo Real Total'] = df_res.apply(lambda r: r['Financial cost amount'] if r['Financial cost amount'] != 0 else r['Physical cost amount'], axis=1)
-                        df_res['Custo Unitário'] = df_res.apply(lambda r: abs(r['Custo Real Total'] / r['Quantity']) if r['Quantity'] != 0 else r['Cost price per unit'], axis=1)
+                        
+                        # --- CALIBRAGEM DO CUSTO UNITÁRIO ---
+                        def calcular_custo_unitario(r):
+                            # Se o ERP exportou R$ 0,00 na baixa (ex: lançou no Adjustment), resgata o custo da BOM
+                            if r['Quantity'] != 0 and r['Custo Real Total'] != 0:
+                                return abs(r['Custo Real Total'] / r['Quantity'])
+                            return r['Cost price per unit']
+
+                        df_res['Custo Unitário'] = df_res.apply(calcular_custo_unitario, axis=1)
                         
                         # --- MATEMÁTICA PURA ---
                         df_res['Desvio Engenharia'] = df_res['Consumption per lot size'] - df_res['qtd_ini']
                         df_res['Desvio Fábrica'] = df_res['Quantity'] - df_res['Consumption per lot size'] 
                         
-                        # --- HIERARQUIA CORRIGIDA (Prioridade: BOM Final vs Consumo) ---
                         def classificar_status(r):
                             if r['Eh_Kanban']: return "Consumo Kanban"
                             
@@ -4057,7 +4080,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                             if r['Desvio Fábrica'] < -0.001: 
                                 return "Fábrica: Economia Operacional"
                                 
-                            # 3. Desvios de ENGENHARIA (Acontece APENAS se a fábrica não desviou)
+                            # 3. Desvios de ENGENHARIA 
                             if r['Desvio Engenharia'] > 0.001:
                                 if r['qtd_ini'] == 0: return "Engenharia: Adicionado no Escopo"
                                 else: return "Engenharia: Aumento de Qtd"
@@ -4107,7 +4130,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         custo_exc = df_final[df_final['Status'].isin(['Fábrica: Excedente Operacional', 'Alerta: Consumido após Remoção'])]['Impacto Financeiro (R$)'].sum()
         custo_eco = df_final[df_final['Status'] == 'Fábrica: Economia Operacional']['Impacto Financeiro (R$)'].sum()
         
-        # Consolida o impacto financeiro LÍQUIDO da Engenharia (+ Adições, - Remoções)
         custo_eng_liq = df_final[df_final['Status'].str.contains('Engenharia')]['Impacto Financeiro (R$)'].sum()
         
         qtd_oh = df_final[df_final['Item'].str.upper() == 'MANUFACTURING OVERHEAD']['Consumption per lot size'].sum()
