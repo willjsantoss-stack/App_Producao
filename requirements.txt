@@ -8,3 +8,4 @@ openpyxl
 fpdf
 supabase
 requests
+reportlab
