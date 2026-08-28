@@ -3921,6 +3921,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     try:
                         # Leitura BOM Final
                         df_fin = pd.read_csv(file_bom_fin, sep=';', encoding='latin1') if file_bom_fin.name.endswith('.csv') else pd.read_excel(file_bom_fin)
+                        df_fin.columns = df_fin.columns.str.strip() # Limpa espaços ocultos nos cabeçalhos
+                        
                         if 'Cost per unit' in df_fin.columns and 'Cost price per unit' not in df_fin.columns:
                             df_fin.rename(columns={'Cost per unit': 'Cost price per unit'}, inplace=True)
                         df_fin['Item/Resource'] = df_fin['Item/Resource'].astype(str).str.strip()
@@ -3932,6 +3934,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         # Leitura BOM Inicial (Se houver)
                         if file_bom_ini:
                             df_ini = pd.read_csv(file_bom_ini, sep=';', encoding='latin1') if file_bom_ini.name.endswith('.csv') else pd.read_excel(file_bom_ini)
+                            df_ini.columns = df_ini.columns.str.strip()
                             df_ini['Item/Resource'] = df_ini['Item/Resource'].astype(str).str.strip()
                             df_bom_i = df_ini.groupby('Item/Resource')['Consumption per lot size'].sum().reset_index().rename(columns={'Consumption per lot size': 'qtd_ini'})
                         else:
@@ -3940,38 +3943,53 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
                         # Leitura Consumo Real
                         df_r = pd.read_csv(file_real, sep=';', encoding='latin1') if file_real.name.endswith('.csv') else pd.read_excel(file_real)
+                        df_r.columns = df_r.columns.str.strip()
                         df_r['Item number'] = df_r['Item number'].astype(str).str.strip()
                         if 'Physical cost amount' not in df_r.columns: df_r['Physical cost amount'] = 0.0
                         df_real_agg = df_r.groupby('Item number').agg({'Quantity': 'sum', 'Financial cost amount': 'sum', 'Physical cost amount': 'sum'}).reset_index()
 
-                        # Carrega Listas do Banco (Fáscias e Kanban)
+                        # --- CORREÇÃO: CARREGA O DICIONÁRIO COMPLETO DO KANBAN ---
                         lista_ign = pd.read_sql_query("SELECT codigo FROM itens_ignorados_auditoria", engine)['codigo'].astype(str).tolist()
-                        lista_kbn = pd.read_sql_query("SELECT codigo FROM itens_kanban", engine)['codigo'].astype(str).tolist()
+                        
+                        df_kbn_db = pd.read_sql_query("SELECT codigo, descricao FROM itens_kanban", engine)
+                        lista_kbn = df_kbn_db['codigo'].astype(str).tolist()
+                        dict_kbn = dict(zip(df_kbn_db['codigo'].astype(str), df_kbn_db['descricao'].astype(str)))
 
                         # Cruzamento 3-Way Match
                         df_m1 = pd.merge(df_bom_f, df_bom_i, on='Item/Resource', how='outer').fillna(0)
                         df_res = pd.merge(df_m1, df_real_agg, left_on='Item/Resource', right_on='Item number', how='outer', suffixes=('_bom', '_real'))
                         
                         df_res['Item'] = df_res['Item/Resource'].fillna(df_res['Item number']).astype(str).str.strip()
-                        df_res['Descrição'] = df_res['Description'].fillna("Item Extra/Fábrica")
+                        df_res['Eh_Kanban'] = df_res['Item'].isin(lista_kbn)
                         
-                        # --- TRATAMENTO DO PROCESSING METHOD ---
+                        # --- INJEÇÃO INTELIGENTE DE DESCRIÇÃO ---
+                        def resolver_descricao(r):
+                            desc = r['Description']
+                            if pd.isna(desc) or str(desc).strip() in ['', 'nan', 'None']:
+                                if r['Eh_Kanban']:
+                                    desc_kbn = dict_kbn.get(r['Item'])
+                                    return desc_kbn if pd.notna(desc_kbn) and str(desc_kbn).strip() != '' else "Item Kanban (S/ Desc)"
+                                return "Item Extra/Fábrica"
+                            return desc
+
+                        df_res['Descrição'] = df_res.apply(resolver_descricao, axis=1)
+                        
+                        # --- HIGIENIZAÇÃO DO PROCESSING METHOD ---
                         if 'Processing method' in df_res.columns:
                             df_res['Método'] = df_res['Processing method'].fillna("N/A").astype(str).str.upper().str.strip()
-                            df_res['Método'] = df_res['Método'].replace('', 'N/A')
+                            df_res['Método'] = df_res['Método'].replace(['', 'NAN', 'NAT', 'NONE'], 'N/A')
                         else:
                             df_res['Método'] = "N/A"
                         
-                        # 1. Filtro: Remove Fáscias de Matéria-Prima
+                        # Remove Fáscias cadastradas na manutenção
                         df_res = df_res[~df_res['Item'].isin(lista_ign)].copy()
 
-                        # 2. Filtro: Remove itens sem Processing method NA BOM e métodos ignorados definitivos (Phantom)
+                        # Filtro: Remove itens sem Processing method NA BOM e métodos ignorados definitivos (Phantom)
                         is_in_bom = (df_res['qtd_ini'] > 0) | (df_res['Consumption per lot size'] > 0)
                         is_blank_method = df_res['Método'].isin(['N/A', 'NAN', 'NONE', 'NAT'])
                         mask_remover_metodos = df_res['Método'].isin(['PHANTOM', 'ASM-PH-WO', 'BUY-SC'])
                         
                         df_res = df_res[~((is_in_bom & is_blank_method) | mask_remover_metodos)].copy()
-                        # ----------------------------------------
 
                         # Normalização numérica
                         for col in ['Consumption per lot size', 'qtd_ini', 'Quantity', 'Financial cost amount', 'Physical cost amount', 'Cost price per unit']:
@@ -3985,11 +4003,14 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res['Desvio Fábrica'] = df_res['Quantity'].abs() - df_res['Consumption per lot size']
                         df_res['Impacto Financeiro (R$)'] = df_res['Desvio Fábrica'].abs() * df_res['Custo Unitário']
                         
-                        # 3. Identificação de Kanban
-                        df_res['Eh_Kanban'] = df_res['Item'].isin(lista_kbn)
-
                         def classificar_status(r):
                             if r['Eh_Kanban']: return "Consumo Kanban"
+                            
+                            metodo = r['Método']
+                            if metodo == 'N/A' or metodo in ['PHANTOM', 'ASM-PH-WO', 'BUY-SC']:
+                                if r['qtd_ini'] > 0 or r['Consumption per lot size'] > 0:
+                                    return "Ignorado (Mão de Obra / Serviço)"
+
                             if r['qtd_ini'] == 0 and r['Consumption per lot size'] > 0: return "Adicionado Engenharia"
                             if r['Consumption per lot size'] == 0 and r['qtd_ini'] > 0: return "Removido Engenharia"
                             if r['Desvio Fábrica'] > 0.001: return "Excedente de Fábrica"
@@ -4014,8 +4035,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         st.markdown("---")
         st.markdown("### 📈 Painel Analítico de Custos (Prévia)")
         
-        # Cálculos de KPI Principais
-        mask_mat = df_final['Item'].str.upper() != 'MANUFACTURING OVERHEAD'
+        # Cálculos de KPI Principais (O Overhead continua sendo calculado mesmo sendo "Ignorado")
+        mask_mat = (df_final['Item'].str.upper() != 'MANUFACTURING OVERHEAD') & (df_final['Status'] != 'Ignorado (Mão de Obra / Serviço)')
         custo_total_mat = df_final[mask_mat]['Custo Real Total'].abs().sum()
         
         custo_kbn = df_final[df_final['Eh_Kanban'] == True]['Custo Real Total'].abs().sum()
@@ -4036,15 +4057,17 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         c3.metric("Excedente (Fábrica)", f"R$ {custo_exc:,.2f}", f"Economia: R$ {custo_eco:,.2f}", delta_color="inverse")
         c4.metric("Adicionado (Engenharia)", f"R$ {custo_eng_add:,.2f}", "Custo Extra Estrutura", delta_color="off")
 
-        # Gráficos de Tela
+        # Gráficos de Tela (Ocultando os ignorados)
+        df_graficos = df_final[df_final['Status'] != 'Ignorado (Mão de Obra / Serviço)']
+        
         cg1, cg2 = st.columns(2)
         with cg1:
-            df_pie = df_final.groupby('Status')['Item'].count().reset_index()
+            df_pie = df_graficos.groupby('Status')['Item'].count().reset_index()
             fig_pie = px.pie(df_pie, names='Status', values='Item', hole=0.4, title="Conformidade Geral de Itens")
             st.plotly_chart(fig_pie, use_container_width=True)
             
         with cg2:
-            df_bar = df_final[df_final['Status'].isin(['Excedente de Fábrica', 'Adicionado Engenharia'])]
+            df_bar = df_graficos[df_graficos['Status'].isin(['Excedente de Fábrica', 'Adicionado Engenharia'])]
             df_bar = df_bar.sort_values(by='Impacto Financeiro (R$)', ascending=True).tail(10)
             if not df_bar.empty:
                 fig_bar = px.bar(df_bar, x='Impacto Financeiro (R$)', y='Item', orientation='h', 
@@ -4061,7 +4084,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         # 1. SALVAR NO BANCO DE DADOS
         if col_b1.button("📥 Gravar Histórico de Diferenças no Banco", type="primary", use_container_width=True):
             with st.spinner("Gravando desvios..."):
-                df_gravar = df_final[df_final['Status'] != 'Conforme']
+                # Grava no banco apenas o que é desvio real de material
+                df_gravar = df_final[~df_final['Status'].isin(['Conforme', 'Ignorado (Mão de Obra / Serviço)'])]
                 for _, r in df_gravar.iterrows():
                     cursor.execute("""
                         INSERT INTO auditoria_3vias_historico 
@@ -4126,9 +4150,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     # 2. Análise Gráfica (Gerando imagens na memória)
                     story.append(Paragraph("<b>2. Análise Gráfica de Desvios</b>", styles['Heading2']))
                     
-                    # Gráfico Pizza Matplotlib
                     fig_p, ax_p = plt.subplots(figsize=(6, 3.5), facecolor='white')
-                    dados_r = df_final.groupby('Status')['Item'].count()
+                    dados_r = df_graficos.groupby('Status')['Item'].count()
                     if not dados_r.empty:
                         ax_p.pie(dados_r.values, labels=dados_r.index, autopct='%1.1f%%', startangle=90, colors=plt.cm.Paired.colors)
                     fig_p.tight_layout()
@@ -4174,7 +4197,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     add_tabela_pdf(df_final[df_final['Status'] == 'Economia de Fábrica'], "Economia de Fábrica (Abaixo do Orçado)", "Qtd Poupada")
                     add_tabela_pdf(df_final[df_final['Status'] == 'Adicionado Engenharia'], "Adicionado pela Engenharia (Pós-Abertura)", "Qtd Adicionada")
                     
-                    # Tabela exclusiva para Kanban
                     df_kbn_pdf = df_final[df_final['Status'] == 'Consumo Kanban'].sort_values(by='Custo Real Total', ascending=False).head(20)
                     if not df_kbn_pdf.empty:
                         story.append(Paragraph(f"<b>Tabela: Itens Kanban (Top 20 Custos)</b>", styles['Heading3']))
@@ -4187,7 +4209,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         t.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor("#444444")), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTSIZE', (0,0), (-1,-1), 8), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'), ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#e2e8f0"))]))
                         story.append(t)
 
-                    # 4. Assinaturas
                     story.append(Spacer(1, 40))
                     sig = Table([["______________________________________", "______________________________________"], ["Responsável (Preparação)", "Validação Gerencial"]], colWidths=[260, 260])
                     sig.setStyle(TableStyle([('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 10)]))
@@ -4209,9 +4230,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                 except Exception as e:
                     st.error(f"❌ Erro na geração do PDF: {e}")
 
-            # Exibição interativa na tela
+            # Exibição interativa na tela (Ocultando os ignorados)
             st.markdown("### 📋 Prévia dos Desvios Identificados")
-            st.dataframe(df_final[['Item', 'Descrição', 'qtd_ini', 'Consumption per lot size', 'Quantity', 'Desvio Engenharia', 'Desvio Fábrica', 'Status']].rename(columns={
+            st.dataframe(df_graficos[['Item', 'Descrição', 'qtd_ini', 'Consumption per lot size', 'Quantity', 'Desvio Engenharia', 'Desvio Fábrica', 'Status']].rename(columns={
                 'qtd_ini': 'BOM Inicial', 'Consumption per lot size': 'BOM Final', 'Quantity': 'Consumo Real'
             }), width="stretch")
 # Teste de conexão com o GitHub
