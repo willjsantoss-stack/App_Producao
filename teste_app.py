@@ -4021,11 +4021,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res['Custo Real Total'] = df_res.apply(lambda r: r['Financial cost amount'] if r['Financial cost amount'] != 0 else r['Physical cost amount'], axis=1)
                         df_res['Custo Unitário'] = df_res.apply(lambda r: abs(r['Custo Real Total'] / r['Quantity']) if r['Quantity'] != 0 else r['Cost price per unit'], axis=1)
                         
+                        # MATEMÁTICA PURA (+ é acréscimo/excesso, - é remoção/economia)
                         df_res['Desvio Engenharia'] = df_res['Consumption per lot size'] - df_res['qtd_ini']
                         df_res['Desvio Fábrica'] = df_res['Quantity'].abs() - df_res['Consumption per lot size']
-                        df_res['Impacto Financeiro (R$)'] = df_res['Desvio Fábrica'].abs() * df_res['Custo Unitário']
                         
-                        # --- NOVA CLASSIFICAÇÃO DE 5 NÍVEIS ---
                         def classificar_status(r):
                             if r['Eh_Kanban']: return "Consumo Kanban"
                             
@@ -4034,26 +4033,33 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                                 if r['qtd_ini'] > 0 or r['Consumption per lot size'] > 0:
                                     return "Ignorado (Mão de Obra / Serviço)"
 
-                            # Alerta Grave: A engenharia retirou a peça, mas a fábrica montou igual
                             if r['qtd_ini'] > 0 and r['Consumption per lot size'] == 0 and r['Quantity'] > 0:
                                 return "Alerta: Consumido após Remoção"
-                                
                             if r['qtd_ini'] > 0 and r['Consumption per lot size'] == 0 and r['Quantity'] == 0:
                                 return "Engenharia: Removido do Escopo"
-
                             if r['qtd_ini'] == 0 and r['Consumption per lot size'] > 0: 
                                 return "Engenharia: Adicionado no Escopo"
-                                
                             if r['Desvio Fábrica'] > 0.001: 
                                 return "Fábrica: Excedente Operacional"
-                                
                             if r['Desvio Fábrica'] < -0.001: 
                                 return "Fábrica: Economia Operacional"
-                                
                             return "Conforme"
 
                         df_res['Status'] = df_res.apply(classificar_status, axis=1)
-                        df_res['Motivo'] = "Não Informado" # Prepara a coluna para classificação manual
+                        
+                        # --- COLUNA UNIFICADA DE QUANTIDADE E IMPACTO INTELIGENTE ---
+                        def calcular_qtd_divergencia(r):
+                            if 'Engenharia' in r['Status']: return r['Desvio Engenharia']
+                            if 'Fábrica' in r['Status'] or 'Alerta' in r['Status']: return r['Desvio Fábrica']
+                            return 0.0
+
+                        df_res['Qtd Divergência'] = df_res.apply(calcular_qtd_divergencia, axis=1)
+                        
+                        def calcular_impacto(r):
+                            return abs(r['Qtd Divergência']) * r['Custo Unitário']
+                                
+                        df_res['Impacto Financeiro (R$)'] = df_res.apply(calcular_impacto, axis=1)
+                        df_res['Motivo'] = "Não Informado"
                         
                         st.session_state['res_audit_3way'] = df_res
                         st.session_state['nome_bom_base'] = file_bom_fin.name
@@ -4064,6 +4070,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
     # --- RENDERIZAÇÃO DO DASHBOARD INTERATIVO ANTES DO PDF ---
     if 'res_audit_3way' in st.session_state:
         df_final = st.session_state['res_audit_3way']
+        
+        if 'Eh_Kanban' not in df_final.columns: df_final['Eh_Kanban'] = False
+        if 'Qtd Divergência' not in df_final.columns: df_final['Qtd Divergência'] = 0.0
             
         st.markdown("---")
         st.markdown("### 📈 Painel Analítico de Custos (Prévia)")
@@ -4088,57 +4097,28 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         c3.metric("Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", f"Economia: R$ {custo_eco:,.2f}", delta_color="inverse")
         c4.metric("Adicionado (Engenharia)", f"R$ {custo_eng_add:,.2f}", "Aumento de Estrutura", delta_color="off")
 
-        # Gráficos de Tela com melhoria de Rótulos (Plotly)
         df_graficos = df_final[df_final['Status'] != 'Ignorado (Mão de Obra / Serviço)'].copy()
         
         cg1, cg2 = st.columns(2)
         with cg1:
             df_pie = df_graficos.groupby('Status')['Item'].count().reset_index()
-            
             if not df_pie.empty:
-                # 1. Calcula a porcentagem matemática
                 total_itens = df_pie['Item'].sum()
                 df_pie['Porcentagem'] = (df_pie['Item'] / total_itens * 100).round(1)
-                
-                # 2. Cria o novo rótulo juntando o Status com o valor de %
                 df_pie['Rotulo_Personalizado'] = df_pie['Status'] + " (" + df_pie['Porcentagem'].astype(str) + "%)"
                 
-                # 3. Gera o gráfico usando o novo rótulo
                 fig_pie = px.pie(df_pie, names='Rotulo_Personalizado', values='Item', hole=0.45, title="Conformidade Geral de Itens")
-                
-                # 4. Mantém o visual limpo e joga a legenda para a direita (como no seu desenho)
                 fig_pie.update_traces(textposition='inside', textinfo='percent')
-                fig_pie.update_layout(
-                    showlegend=True, 
-                    legend=dict(
-                        orientation="v",      # Legenda na Vertical
-                        yanchor="middle", 
-                        y=0.5,                # Centralizado verticalmente
-                        xanchor="left", 
-                        x=1.0,                # Empurrado totalmente para a Direita
-                        title="" 
-                    ),
-                    margin=dict(t=40, b=20, l=0, r=0)
-                )
+                fig_pie.update_layout(showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.0, title=""), margin=dict(t=40, b=20, l=0, r=0))
                 st.plotly_chart(fig_pie, use_container_width=True)
-            else:
-                st.info("Sem itens para exibir no gráfico.")
             
         with cg2:
-            # Seleciona apenas os ofensores de custo extra
             df_bar = df_graficos[df_graficos['Status'].isin(['Fábrica: Excedente Operacional', 'Engenharia: Adicionado no Escopo', 'Alerta: Consumido após Remoção'])]
             df_bar = df_bar.sort_values(by='Impacto Financeiro (R$)', ascending=True).tail(10)
-            
             if not df_bar.empty:
-                # CORREÇÃO CRÍTICA: Força o Item a ser tratado como Texto para evitar notação científica (1.1x10^15)
                 df_bar['Item'] = df_bar['Item'].astype(str)
-                
-                fig_bar = px.bar(df_bar, x='Impacto Financeiro (R$)', y='Item', orientation='h', 
-                                 title="Top 10 Itens: Ofensores Financeiros", color='Status', text='Impacto Financeiro (R$)',
-                                 color_discrete_map={'Fábrica: Excedente Operacional': '#dc3545', 'Engenharia: Adicionado no Escopo': '#fd7e14', 'Alerta: Consumido após Remoção': '#8B0000'})
-                
+                fig_bar = px.bar(df_bar, x='Impacto Financeiro (R$)', y='Item', orientation='h', title="Top 10 Itens: Ofensores Financeiros", color='Status', text='Impacto Financeiro (R$)', color_discrete_map={'Fábrica: Excedente Operacional': '#dc3545', 'Engenharia: Adicionado no Escopo': '#fd7e14', 'Alerta: Consumido após Remoção': '#8B0000'})
                 fig_bar.update_traces(texttemplate='R$ %{text:,.2f}', textposition='outside')
-                # yaxis_type='category' garante que o Plotly não tente entender o código do item como número
                 fig_bar.update_layout(yaxis=dict(type='category', title=""), xaxis=dict(title=""), showlegend=True, legend=dict(orientation="h", y=-0.2), margin=dict(t=40, b=10))
                 st.plotly_chart(fig_bar, use_container_width=True)
             else:
@@ -4146,25 +4126,25 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
         st.markdown("---")
         st.markdown("### 📋 Classificação de Causa Raiz (Motivo)")
-        st.write("Antes de gerar o relatório, revise e classifique a causa raiz das divergências abaixo. As alterações feitas aqui irão compor as tabelas do PDF Final.")
+        st.write("Antes de gerar o relatório, verifique as quantidades (+ Adição/Excesso | - Remoção/Economia) e classifique a causa raiz.")
         
-        # Filtra apenas o que é divergência para facilitar a edição
         mask_divergencias = df_final['Status'].isin(['Fábrica: Excedente Operacional', 'Fábrica: Economia Operacional', 'Engenharia: Adicionado no Escopo', 'Alerta: Consumido após Remoção'])
         df_editavel = df_final[mask_divergencias].copy()
         
         if not df_editavel.empty:
-            df_edit_display = df_editavel[['Item', 'Descrição', 'Status', 'Impacto Financeiro (R$)', 'Motivo']].sort_values(by='Impacto Financeiro (R$)', ascending=False)
+            df_edit_display = df_editavel[['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].sort_values(by='Impacto Financeiro (R$)', ascending=False)
             
-            # Busca os motivos atualizados no banco de dados em tempo real
+            # Puxa motivos dinâmicos do Banco
             df_motivos_db = pd.read_sql_query("SELECT motivo FROM motivos_auditoria ORDER BY motivo", engine)
-            opcoes_motivo = ["Não Informado"] + df_motivos_db['motivo'].tolist() if not df_motivos_db.empty else ["Não Informado", "Scrap / Refugo"]
-
+            opcoes_motivo = ["Não Informado"] + df_motivos_db['motivo'].tolist() if not df_motivos_db.empty else ["Não Informado", "Scrap / Refugo", "Ajuste de Projeto"]
+            
             tabela_editada = st.data_editor(
                 df_edit_display,
                 column_config={
                     "Item": st.column_config.TextColumn(disabled=True),
                     "Descrição": st.column_config.TextColumn(disabled=True),
                     "Status": st.column_config.TextColumn(disabled=True),
+                    "Qtd Divergência": st.column_config.NumberColumn("Qtd Desvio", format="%+.2f", disabled=True), # Mostra explícito + ou -
                     "Impacto Financeiro (R$)": st.column_config.NumberColumn(format="R$ %.2f", disabled=True),
                     "Motivo": st.column_config.SelectboxColumn("Causa Raiz (Selecione)", options=opcoes_motivo, required=True)
                 },
@@ -4173,7 +4153,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                 key="tabela_causa_raiz"
             )
             
-            # Sincroniza a tabela editada de volta para o dataframe principal
             dict_motivos = dict(zip(tabela_editada['Item'], tabela_editada['Motivo']))
             df_final['Motivo'] = df_final['Item'].map(dict_motivos).fillna(df_final['Motivo'])
         else:
@@ -4183,11 +4162,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         st.markdown("### 💾 Salvar e Exportar Auditoria")
         col_b1, col_b2 = st.columns(2)
         
-        # 1. SALVAR NO BANCO DE DADOS
         if col_b1.button("📥 Gravar Histórico no Banco (Com Justificativas)", type="primary", use_container_width=True):
             with st.spinner("Gravando desvios e motivos..."):
-                try:
-                    cursor.execute("ALTER TABLE auditoria_3vias_historico ADD COLUMN IF NOT EXISTS motivo TEXT")
+                try: cursor.execute("ALTER TABLE auditoria_3vias_historico ADD COLUMN IF NOT EXISTS motivo TEXT")
                 except: pass
                 conn.commit()
                 
@@ -4203,9 +4180,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         r['Impacto Financeiro (R$)'], r['Status'], r['Motivo']
                     ))
                 conn.commit()
-                st.success(f"✔️ {len(df_gravar)} desvios (com causa raiz) gravados no banco de dados!")
+                st.success(f"✔️ {len(df_gravar)} desvios gravados no banco de dados!")
 
-        # 2. GERAR O PDF EXECUTIVO
         if col_b2.button("📄 Gerar Relatório Executivo Oficial (PDF)", use_container_width=True):
             with st.spinner("Desenhando documento..."):
                 try:
@@ -4224,12 +4200,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     styles = getSampleStyleSheet()
                     title_style = ParagraphStyle(name='Title', parent=styles['Heading1'], alignment=1, spaceAfter=20, textColor=colors.HexColor("#003366"))
 
-                    # Cabeçalho
                     story.append(Paragraph("VALIDAÇÃO DE CONSUMO - 3 WAY MATCH", title_style))
                     story.append(Paragraph(f"<b>Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')} | <b>BOM Base:</b> {st.session_state.get('nome_bom_base', 'Desconhecido')}", styles['Normal']))
                     story.append(Spacer(1, 15))
 
-                    # 1. Resumo Executivo
                     story.append(Paragraph("<b>1. Resumo Executivo (KPIs)</b>", styles['Heading2']))
                     data_kpi = [
                         ["Indicador Analisado", "Valor (R$ / H)", "Detalhes / Composição"],
@@ -4247,14 +4221,11 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     story.append(t_kpi)
                     story.append(Spacer(1, 15))
 
-                    # 2. Análise Gráfica Melhorada (Matplotlib)
                     story.append(Paragraph("<b>2. Análise Gráfica de Desvios</b>", styles['Heading2']))
                     
                     df_pdf_graf = df_graficos.copy()
-                    
                     fig_pdf, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 3.5), facecolor='white')
                     
-                    # Gráfico 1: Rosca
                     dados_r = df_pdf_graf.groupby('Status')['Item'].count()
                     if not dados_r.empty:
                         wedges, texts, autotexts = ax1.pie(dados_r.values, autopct='%1.1f%%', startangle=140, pctdistance=0.85, colors=plt.cm.Set2.colors)
@@ -4263,19 +4234,15 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         ax1.add_artist(centre_circle)
                         ax1.set_title("Conformidade Geral", fontsize=10, pad=10)
                         
-                    # Gráfico 2: Barras Top 10 (Formatado corretamente como texto)
                     df_bar_pdf = df_pdf_graf[df_pdf_graf['Status'].isin(['Fábrica: Excedente Operacional', 'Engenharia: Adicionado no Escopo', 'Alerta: Consumido após Remoção'])]
                     df_bar_pdf = df_bar_pdf.sort_values(by='Impacto Financeiro (R$)', ascending=True).tail(5)
                     if not df_bar_pdf.empty:
-                        # TRUQUE DE MESTRE: Força o y como String e o Matplotlib desenha perfeito
                         y_pos = np.arange(len(df_bar_pdf))
                         ax2.barh(y_pos, df_bar_pdf['Impacto Financeiro (R$)'], color='#dc3545')
                         ax2.set_yticks(y_pos, labels=df_bar_pdf['Item'].astype(str).tolist(), fontsize=7)
                         ax2.set_title("Top 5 Impacto Financeiro (R$)", fontsize=10, pad=10)
                         ax2.spines['top'].set_visible(False)
                         ax2.spines['right'].set_visible(False)
-                        
-                        # Coloca os valores na ponta das barras
                         for i, v in enumerate(df_bar_pdf['Impacto Financeiro (R$)']):
                             ax2.text(v + 3, i, f"{v:,.0f}", color='black', va='center', fontsize=7)
 
@@ -4286,11 +4253,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     plt.close(fig_pdf)
                     
                     story.append(RLImage(buf_p, width=480, height=210))
-
-                    # 3. Detalhamento em Tabelas (Com Motivos)
                     story.append(PageBreak())
                     story.append(Paragraph("<b>3. Detalhamento de Desvios (Com Causa Raiz)</b>", styles['Heading2']))
                     
+                    # --- CORREÇÃO NO PDF: PUXANDO A COLUNA UNIFICADA DE DIVERGÊNCIA ---
                     def add_tabela_pdf_motivo(df_sub, titulo, desc_coluna):
                         if df_sub.empty: return
                         story.append(Paragraph(f"<b>Tabela: {titulo}</b>", styles['Heading3']))
@@ -4300,7 +4266,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         
                         t_data = [["Item", "Descrição", desc_coluna, "Valor (R$)", "Motivo (Raiz)"]]
                         for _, r in df_top.iterrows():
-                            t_data.append([str(r['Item']), str(r['Descrição'])[:25], f"{r['Desvio Fábrica'] if 'Fábrica' in titulo else r['Desvio Engenharia']:.2f}", f"R$ {r['Impacto Financeiro (R$)']:,.2f}", str(r.get('Motivo', '-'))])
+                            # Usa :+.2f para forçar o sinal de + ou -
+                            t_data.append([str(r['Item']), str(r['Descrição'])[:25], f"{r['Qtd Divergência']:+.2f}", f"R$ {r['Impacto Financeiro (R$)']:,.2f}", str(r.get('Motivo', '-'))])
                         t_data.append(['-', 'TOTAL DA CATEGORIA', '-', f"R$ {tot_val:,.2f}", '-'])
                         
                         t = Table(t_data, colWidths=[65, 180, 55, 70, 110])
@@ -4324,7 +4291,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         t.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor("#444444")), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTSIZE', (0,0), (-1,-1), 8), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'), ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#e2e8f0"))]))
                         story.append(t)
 
-                    # 4. Assinaturas
                     story.append(Spacer(1, 40))
                     sig = Table([["______________________________________", "______________________________________"], ["Responsável (Preparação)", "Validação Gerencial"]], colWidths=[260, 260])
                     sig.setStyle(TableStyle([('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 10)]))
@@ -4340,7 +4306,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         mime="application/pdf",
                         type="primary"
                     )
-                    st.success("✔️ Relatório PDF gerado com as Causa-Raízes atualizadas!")
+                    st.success("✔️ Relatório PDF gerado com as Quantidades Reais e Sinais (+/-)!")
                 except Exception as e:
                     st.error(f"❌ Erro na geração do PDF: {e}")
 # Teste de conexão com o GitHub
