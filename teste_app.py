@@ -4055,11 +4055,11 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                             if r['Desvio Fábrica'] > 0.001: return "Fábrica: Excedente Operacional"
                             if r['Desvio Fábrica'] < -0.001: return "Fábrica: Economia Operacional"
                             if r['Desvio Engenharia'] > 0.001:
-                                if r['qtd_ini'] == 0: return "Engenharia: Adicionado no Escopo"
-                                else: return "Engenharia: Aumento de Qtd"
+                                if r['qtd_ini'] == 0: return "BOM: adição"
+                                else: return "BOM: Aumento de Qtd"
                             if r['Desvio Engenharia'] < -0.001:
                                 if r['Consumption per lot size'] == 0: return "Engenharia: Removido do Escopo"
-                                else: return "Engenharia: Redução de Qtd"
+                                else: return "BOM: Redução de Qtd"
                             return "Conforme"
 
                         df_res['Status'] = df_res.apply(classificar_status, axis=1)
