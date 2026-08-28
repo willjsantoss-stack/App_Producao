@@ -4095,8 +4095,21 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         with cg1:
             df_pie = df_graficos.groupby('Status')['Item'].count().reset_index()
             fig_pie = px.pie(df_pie, names='Status', values='Item', hole=0.45, title="Conformidade Geral de Itens")
-            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-            fig_pie.update_layout(showlegend=False, margin=dict(t=40, b=10))
+            
+            # ATUALIZAÇÃO: Exibe apenas o percentual e cria uma legenda limpa na parte de baixo
+            fig_pie.update_traces(textposition='auto', textinfo='percent')
+            fig_pie.update_layout(
+                showlegend=True, 
+                legend=dict(
+                    orientation="h", 
+                    yanchor="top", 
+                    y=-0.1, 
+                    xanchor="center", 
+                    x=0.5,
+                    title="" # Remove o título "Status" da legenda para economizar espaço
+                ),
+                margin=dict(t=40, b=20)
+            )
             st.plotly_chart(fig_pie, use_container_width=True)
             
         with cg2:
@@ -4133,7 +4146,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
             # Busca os motivos atualizados no banco de dados em tempo real
             df_motivos_db = pd.read_sql_query("SELECT motivo FROM motivos_auditoria ORDER BY motivo", engine)
             opcoes_motivo = ["Não Informado"] + df_motivos_db['motivo'].tolist() if not df_motivos_db.empty else ["Não Informado", "Scrap / Refugo"]
-            
+
             tabela_editada = st.data_editor(
                 df_edit_display,
                 column_config={
