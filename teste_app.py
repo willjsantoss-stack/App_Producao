@@ -2281,49 +2281,172 @@ elif menu_selecionado == "📅 Planejamento de Carga":
     st.write("Visão estratégica para tomada de decisão: Aprovação de Horas Extras vs. Liberação de Banco de Horas.")
         
     if 'data_ini_gantt' in locals() and data_ini_gantt:
-            dt_start_cap = pd.to_datetime(data_ini_gantt).date()
-            if 'data_fim_gantt' in locals() and data_fim_gantt:
-                dt_end_cap = pd.to_datetime(data_fim_gantt).date()
-            else:
-                dt_end_cap = dt_start_cap + timedelta(days=30)
-                
-            date_list_cap = [dt_start_cap + timedelta(days=x) for x in range((dt_end_cap - dt_start_cap).days + 1)]
+        dt_start_cap = pd.to_datetime(data_ini_gantt).date()
+        if 'data_fim_gantt' in locals() and data_fim_gantt:
+            dt_end_cap = pd.to_datetime(data_fim_gantt).date()
+        else:
+            dt_end_cap = dt_start_cap + timedelta(days=30)
             
-            df_colabs_ativos_bal = pd.read_sql_query("SELECT matricula, nome, linha, data_admissao, data_demissao FROM colaboradores WHERE data_demissao IS NULL OR data_demissao = ''", engine)
-            df_ferias_bal = pd.read_sql_query("SELECT matricula, data_inicio, data_fim FROM ferias_colaboradores", engine)
+        date_list_cap = [dt_start_cap + timedelta(days=x) for x in range((dt_end_cap - dt_start_cap).days + 1)]
+        
+        df_colabs_ativos_bal = pd.read_sql_query("SELECT matricula, nome, linha, data_admissao, data_demissao FROM colaboradores WHERE data_demissao IS NULL OR data_demissao = ''", engine)
+        df_ferias_bal = pd.read_sql_query("SELECT matricula, data_inicio, data_fim FROM ferias_colaboradores", engine)
+        
+        cursor.execute("SELECT data FROM feriados")
+        feriados_bd_bal = [r[0] for r in cursor.fetchall()]
+
+        # --- NOVA LÓGICA: BUSCAR DISPENSAS (BANCO DE HORAS) DO PERÍODO ---
+        df_ap_bh = pd.read_sql_query("SELECT matricula, data_registro, atividade, horas_normais, saldo_bh FROM apontamentos WHERE atividade LIKE '%%Banco de Horas%%'", engine)
+        
+        df_ap_bh['data_dt'] = pd.to_datetime(df_ap_bh['data_registro'], format='%d/%m/%Y', errors='coerce').dt.date
+        df_ap_bh = df_ap_bh[(df_ap_bh['data_dt'] >= dt_start_cap) & (df_ap_bh['data_dt'] <= dt_end_cap)]
+        df_ap_bh = pd.merge(df_ap_bh, df_colabs_ativos_bal[['matricula', 'linha']], on='matricula', how='inner')
+        
+        df_ap_bh['bh_desconto'] = df_ap_bh.apply(lambda r: float(r['horas_normais']) if float(r['horas_normais'] or 0) > 0 else abs(float(r['saldo_bh'] or 0)), axis=1)
+        
+        bh_desconto_linha = df_ap_bh.groupby('linha')['bh_desconto'].sum().to_dict()
+        
+        cap_linha = {}
+        cap_total_fabrica = 0.0
+        
+        for _, colab in df_colabs_ativos_bal.iterrows():
+            linha_op = colab['linha'] if pd.notna(colab['linha']) and colab['linha'].strip() != '' else 'Sem Setor'
+            if linha_op not in cap_linha: cap_linha[linha_op] = 0.0
+            
+            mat = colab['matricula']
+            d_adm = pd.to_datetime(colab['data_admissao'], format='%Y-%m-%d', errors='coerce').date() if pd.notna(colab['data_admissao']) and str(colab['data_admissao']).strip() != '' else date.min
+            
+            for d in date_list_cap:
+                if d < d_adm: continue
+                is_feriado = d.strftime("%Y-%m-%d") in feriados_bd_bal or d.weekday() == 6
+                em_ferias = False
+                filtro_f = df_ferias_bal[df_ferias_bal['matricula'] == mat]
+                for _, vf in filtro_f.iterrows():
+                    try:
+                        if pd.to_datetime(vf['data_inicio']).date() <= d <= pd.to_datetime(vf['data_fim']).date():
+                            em_ferias = True
+                            break
+                    except: pass
+                if not (is_feriado or em_ferias):
+                    c_sq, c_sx, _, _ = obter_parametros_dia(conn, d)
+                    if d.weekday() <= 3: 
+                        cap_linha[linha_op] += c_sq
+                        cap_total_fabrica += c_sq
+                    elif d.weekday() == 4: 
+                        cap_linha[linha_op] += c_sx
+                        cap_total_fabrica += c_sx
+
+        # --- APLICAR O DESCONTO DE BANCO DE HORAS NA CAPACIDADE ---
+        for linha in cap_linha:
+            desconto = bh_desconto_linha.get(linha, 0.0)
+            cap_linha[linha] = max(0, cap_linha[linha] - desconto) 
+        
+        cap_total_fabrica = max(0, cap_total_fabrica - sum(bh_desconto_linha.values()))
+
+        if not df_gantt_raw.empty:
+            df_plan_clean = df_gantt_raw[df_gantt_raw['so'] != '⏸️ AFASTAMENTO']
+            df_plan_agrupado = df_plan_clean.groupby('linha')['horas_planejadas'].sum().reset_index()
+            total_plan_fabrica = df_plan_clean['horas_planejadas'].sum()
+        else:
+            df_plan_agrupado = pd.DataFrame(columns=['linha', 'horas_planejadas'])
+            total_plan_fabrica = 0.0
+            
+        df_capacidade = pd.DataFrame(list(cap_linha.items()), columns=['linha', 'capacidade_h'])
+        df_bh_desconto = pd.DataFrame(list(bh_desconto_linha.items()), columns=['linha', 'banco_horas'])
+        
+        df_balanco = pd.merge(df_capacidade, df_plan_agrupado, on='linha', how='left').fillna(0)
+        df_balanco = pd.merge(df_balanco, df_bh_desconto, on='linha', how='left').fillna(0)
+        
+        df_balanco['ocupacao_pct'] = ((df_balanco['horas_planejadas'] / df_balanco['capacidade_h']) * 100).fillna(0)
+        df_balanco['saldo_h'] = df_balanco['capacidade_h'] - df_balanco['horas_planejadas']
+        
+        ocup_global_pct = (total_plan_fabrica / cap_total_fabrica * 100) if cap_total_fabrica > 0 else 0
+        saldo_global = cap_total_fabrica - total_plan_fabrica
+        
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+        col_m1.metric("Capacidade Total Líquida", f"{cap_total_fabrica:.0f}h")
+        col_m2.metric("Horas Planejadas", f"{total_plan_fabrica:.0f}h")
+        col_m3.metric("Saldo Livre (Ociosidade)", f"{saldo_global:.0f}h", delta=f"{saldo_global:.0f}h", delta_color="normal" if saldo_global >= 0 else "inverse")
+        col_m4.metric("Ocupação Global", f"{ocup_global_pct:.1f}%")
+        
+        df_balanco = df_balanco.sort_values('ocupacao_pct', ascending=False)
+        
+        fig_bal = go.Figure()
+        fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['capacidade_h'], name='Capacidade Líquida', marker_color='#28a745', offsetgroup=0))
+        fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['banco_horas'], name='Folga / BH', marker_color='#85e0a3', offsetgroup=0, base=df_balanco['capacidade_h']))
+        fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['horas_planejadas'], name='Demanda Planejada', marker_color='#004a99', offsetgroup=1, base=0))
+        
+        fig_bal.update_layout(barmode='group', title="Gargalos e Ociosidade por Setor", yaxis_title="Horas", height=350, margin=dict(t=30, b=10))
+        st.plotly_chart(fig_bal, width="stretch", key="bar_balanco_capacidade")
+        
+    else:
+        st.info("Selecione um período no filtro do Gantt para visualizar o balanço de capacidade.")
+
+    st.markdown("---")
+    
+    # 🎯 QUADRO DE ADERÊNCIA OPERACIONAL
+    st.markdown("### 🎯 Quadro de Aderência Operacional: Capacidade vs Planejado vs Realizado")
+    st.write("Visão consolidada cruzando a meta de carga do sistema com os apontamentos reais de produção na fábrica.")
+        
+    if 'data_ini_gantt' in locals() and data_ini_gantt:
+        if 'data_fim_gantt' in locals() and data_fim_gantt:
+            df_plan_rel = pd.read_sql_query(f"SELECT data_planejada, matricula, wo, unidade, horas_planejadas FROM planejamento WHERE data_planejada BETWEEN '{data_ini_gantt}' AND '{data_fim_gantt}'", engine)
+        else:
+            df_plan_rel = pd.read_sql_query(f"SELECT data_planejada, matricula, wo, unidade, horas_planejadas FROM planejamento WHERE data_planejada >= '{data_ini_gantt}'", engine)
+    else:
+        df_plan_rel = pd.read_sql_query("SELECT data_planejada, matricula, wo, unidade, horas_planejadas FROM planejamento", engine)
+        
+    df_apont_rel = pd.read_sql_query("SELECT data_registro, matricula, operador, wo, unidade, horas_normais as horas_realizadas FROM apontamentos WHERE tipo = 'Produção Normal'", engine)
+    
+    if not df_plan_rel.empty:
+        df_plan_rel = df_plan_rel.rename(columns={'data_planejada': 'data_iso'})
+        if not df_apont_rel.empty:
+            df_apont_rel['data_iso'] = pd.to_datetime(df_apont_rel['data_registro'], format="%d/%m/%Y", errors='coerce').dt.strftime('%Y-%m-%d')
+            
+            if 'data_fim_gantt' in locals() and data_fim_gantt and 'data_ini_gantt' in locals() and data_ini_gantt:
+                df_apont_rel = df_apont_rel[(df_apont_rel['data_iso'] >= data_ini_gantt) & (df_apont_rel['data_iso'] <= data_fim_gantt)]
+            elif 'data_ini_gantt' in locals() and data_ini_gantt:
+                df_apont_rel = df_apont_rel[df_apont_rel['data_iso'] >= data_ini_gantt]
+                
+            df_apont_agrup = df_apont_rel.groupby(['data_iso', 'matricula', 'wo', 'unidade'])['horas_realizadas'].sum().reset_index()
+        else:
+            df_apont_agrup = pd.DataFrame(columns=['data_iso', 'matricula', 'wo', 'unidade', 'horas_realizadas'])
+            
+        df_aderencia = pd.merge(df_plan_rel, df_apont_agrup, on=['data_iso', 'matricula', 'wo', 'unidade'], how='outer')
+        df_aderencia['horas_planejadas'] = df_aderencia['horas_planejadas'].fillna(0)
+        df_aderencia['horas_realizadas'] = df_aderencia['horas_realizadas'].fillna(0)
+        
+        df_colabs_info = pd.read_sql_query("SELECT matricula, nome, linha, data_admissao, data_demissao FROM colaboradores", engine)
+        df_active_colabs = df_colabs_info[(df_colabs_info['data_demissao'].isna()) | (df_colabs_info['data_demissao'] == '')]
+        
+        df_aderencia = pd.merge(df_aderencia, df_active_colabs, on='matricula', how='inner')
+        
+        if not df_aderencia.empty:
+            if 'data_ini_gantt' in locals() and data_ini_gantt and 'data_fim_gantt' in locals() and data_fim_gantt:
+                dt_start = pd.to_datetime(data_ini_gantt).date()
+                dt_end = pd.to_datetime(data_fim_gantt).date()
+            else:
+                dt_start = pd.to_datetime(df_aderencia['data_iso'].min()).date()
+                dt_end = pd.to_datetime(df_aderencia['data_iso'].max()).date()
+            
+            date_list = [dt_start + timedelta(days=x) for x in range((dt_end - dt_start).days + 1)]
             
             cursor.execute("SELECT data FROM feriados")
-            feriados_bd_bal = [r[0] for r in cursor.fetchall()]
-
-            # --- NOVA LÓGICA: BUSCAR DISPENSAS (BANCO DE HORAS) DO PERÍODO ---
-            # Atualizado para ler tanto os apontamentos novos quanto o histórico antigo
-            df_ap_bh = pd.read_sql_query("SELECT matricula, data_registro, atividade, horas_normais, saldo_bh FROM apontamentos WHERE atividade LIKE '%%Banco de Horas%%'", engine)
+            feriados_bd = [r[0] for r in cursor.fetchall()]
             
-            df_ap_bh['data_dt'] = pd.to_datetime(df_ap_bh['data_registro'], format='%d/%m/%Y', errors='coerce').dt.date
-            df_ap_bh = df_ap_bh[(df_ap_bh['data_dt'] >= dt_start_cap) & (df_ap_bh['data_dt'] <= dt_end_cap)]
-            df_ap_bh = pd.merge(df_ap_bh, df_colabs_ativos_bal[['matricula', 'linha']], on='matricula', how='inner')
+            df_ferias_rh = pd.read_sql_query("SELECT matricula, data_inicio, data_fim FROM ferias_colaboradores", engine)
             
-            # Regra inteligente: se não tem horas normais, puxa o débito do saldo (compatibilidade)
-            df_ap_bh['bh_desconto'] = df_ap_bh.apply(lambda r: float(r['horas_normais']) if float(r['horas_normais'] or 0) > 0 else abs(float(r['saldo_bh'] or 0)), axis=1)
-            
-            bh_desconto_linha = df_ap_bh.groupby('linha')['bh_desconto'].sum().to_dict()
-            # -----------------------------------------------------------------
-            
-            cap_linha = {}
-            cap_total_fabrica = 0.0
-            
-            for _, colab in df_colabs_ativos_bal.iterrows():
-                linha_op = colab['linha'] if pd.notna(colab['linha']) and colab['linha'].strip() != '' else 'Sem Setor'
-                if linha_op not in cap_linha: cap_linha[linha_op] = 0.0
-                
+            cap_dict = {}
+            for _, colab in df_active_colabs.iterrows():
                 mat = colab['matricula']
                 d_adm = pd.to_datetime(colab['data_admissao'], format='%Y-%m-%d', errors='coerce').date() if pd.notna(colab['data_admissao']) and str(colab['data_admissao']).strip() != '' else date.min
                 
-                for d in date_list_cap:
+                cap_total = 0.0
+                for d in date_list:
                     if d < d_adm: continue
-                    is_feriado = d.strftime("%Y-%m-%d") in feriados_bd_bal or d.weekday() == 6
+                    is_feriado = d.strftime("%Y-%m-%d") in feriados_bd or d.weekday() == 6
                     em_ferias = False
-                    filtro_f = df_ferias_bal[df_ferias_bal['matricula'] == mat]
+                    filtro_f = df_ferias_rh[df_ferias_rh['matricula'] == mat]
                     for _, vf in filtro_f.iterrows():
                         try:
                             if pd.to_datetime(vf['data_inicio']).date() <= d <= pd.to_datetime(vf['data_fim']).date():
@@ -2332,66 +2455,35 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                         except: pass
                     if not (is_feriado or em_ferias):
                         c_sq, c_sx, _, _ = obter_parametros_dia(conn, d)
-                        if d.weekday() <= 3: 
-                            cap_linha[linha_op] += c_sq
-                            cap_total_fabrica += c_sq
-                        elif d.weekday() == 4: 
-                            cap_linha[linha_op] += c_sx
-                            cap_total_fabrica += c_sx
-
-            # --- APLICAR O DESCONTO DE BANCO DE HORAS NA CAPACIDADE ---
-            for linha in cap_linha:
-                desconto = bh_desconto_linha.get(linha, 0.0)
-                cap_linha[linha] = max(0, cap_linha[linha] - desconto) # Impede que fique negativo
+                        if d.weekday() <= 3: cap_total += c_sq
+                        elif d.weekday() == 4: cap_total += c_sx
+                cap_dict[colab['nome']] = cap_total
             
-            cap_total_fabrica = max(0, cap_total_fabrica - sum(bh_desconto_linha.values()))
-            # ----------------------------------------------------------
-
-            if not df_gantt_raw.empty:
-                df_plan_clean = df_gantt_raw[df_gantt_raw['so'] != '⏸️ AFASTAMENTO']
-                df_plan_agrupado = df_plan_clean.groupby('linha')['horas_planejadas'].sum().reset_index()
-                total_plan_fabrica = df_plan_clean['horas_planejadas'].sum()
-            else:
-                df_plan_agrupado = pd.DataFrame(columns=['linha', 'horas_planejadas'])
-                total_plan_fabrica = 0.0
-                
-            # --- PREPARANDO OS DADOS PARA O GRÁFICO ---
-            df_capacidade = pd.DataFrame(list(cap_linha.items()), columns=['linha', 'capacidade_h'])
-            df_bh_desconto = pd.DataFrame(list(bh_desconto_linha.items()), columns=['linha', 'banco_horas'])
+            df_ad_grafico = df_aderencia.groupby(['linha', 'nome'])[['horas_planejadas', 'horas_realizadas']].sum().reset_index()
+            df_ad_grafico = df_ad_grafico.sort_values(by=['linha', 'nome'])
             
-            # Junta a Capacidade, o Planejado e o Banco de Horas na mesma tabela
-            df_balanco = pd.merge(df_capacidade, df_plan_agrupado, on='linha', how='left').fillna(0)
-            df_balanco = pd.merge(df_balanco, df_bh_desconto, on='linha', how='left').fillna(0)
+            df_ad_grafico['P_Nome'] = df_ad_grafico['nome'].apply(lambda x: str(x).split()[0] if pd.notna(x) else "N/A")
+            df_ad_grafico['Exibicao_X'] = "[" + df_ad_grafico['linha'] + "] " + df_ad_grafico['P_Nome']
+            df_ad_grafico['capacidade'] = df_ad_grafico['nome'].map(cap_dict).fillna(0)
             
-            df_balanco['ocupacao_pct'] = ((df_balanco['horas_planejadas'] / df_balanco['capacidade_h']) * 100).fillna(0)
-            df_balanco['saldo_h'] = df_balanco['capacidade_h'] - df_balanco['horas_planejadas']
+            fig_ad = go.Figure()
+            fig_ad.add_trace(go.Bar(x=df_ad_grafico['Exibicao_X'], y=df_ad_grafico['horas_planejadas'], name='Horas Planejadas', marker_color='#ffc107'))
+            fig_ad.add_trace(go.Bar(x=df_ad_grafico['Exibicao_X'], y=df_ad_grafico['horas_realizadas'], name='Horas Realizadas', marker_color='#004a99'))
+            fig_ad.add_trace(go.Scatter(x=df_ad_grafico['Exibicao_X'], y=df_ad_grafico['capacidade'], name='Capacidade (Teto)', mode='lines+markers', line=dict(color='#28a745', width=3), marker=dict(size=8)))
             
-            ocup_global_pct = (total_plan_fabrica / cap_total_fabrica * 100) if cap_total_fabrica > 0 else 0
-            saldo_global = cap_total_fabrica - total_plan_fabrica
+            fig_ad.update_layout(barmode='group', title="Cumprimento de Metas de Carga por Operador Ativo",
+                                 xaxis_title="", yaxis_title="Horas Operacionais",
+                                 height=380, margin=dict(t=30, b=10),
+                                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+            st.plotly_chart(fig_ad, width="stretch", key="bar_aderencia_plan_final")
             
-            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-            col_m1.metric("Capacidade Total Líquida", f"{cap_total_fabrica:.0f}h")
-            col_m2.metric("Horas Planejadas", f"{total_plan_fabrica:.0f}h")
-            col_m3.metric("Saldo Livre (Ociosidade)", f"{saldo_global:.0f}h", delta=f"{saldo_global:.0f}h", delta_color="normal" if saldo_global >= 0 else "inverse")
-            col_m4.metric("Ocupação Global", f"{ocup_global_pct:.1f}%")
-            
-            df_balanco = df_balanco.sort_values('ocupacao_pct', ascending=False)
-            
-            # --- MONTANDO O GRÁFICO COM AS BARRAS EMPILHADAS ---
-            fig_bal = go.Figure()
-            
-            # COLUNA 1: A Régua de Capacidade (Verde Escuro + Verde Claro)
-            fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['capacidade_h'], name='Capacidade Líquida', marker_color='#28a745', offsetgroup=0))
-            fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['banco_horas'], name='Folga / BH', marker_color='#85e0a3', offsetgroup=0, base=df_balanco['capacidade_h']))
-            
-            # COLUNA 2: A Demanda Planejada (Azul)
-            fig_bal.add_trace(go.Bar(x=df_balanco['linha'], y=df_balanco['horas_planejadas'], name='Demanda Planejada', marker_color='#004a99', offsetgroup=1, base=0))
-            
-            fig_bal.update_layout(barmode='group', title="Gargalos e Ociosidade por Setor", yaxis_title="Horas", height=350, margin=dict(t=30, b=10))
-            st.plotly_chart(fig_bal, width="stretch", key="bar_balanco_capacidade")
-            
+            with st.expander("Ver Tabela Detalhada Diária (Aderência)"):
+                df_aderencia['Desvio (h)'] = df_aderencia['horas_realizadas'] - df_aderencia['horas_planejadas']
+                st.dataframe(df_aderencia[['data_iso', 'nome', 'linha', 'wo', 'unidade', 'horas_planejadas', 'horas_realizadas', 'Desvio (h)']], width="stretch")
+        else:
+            st.info("Nenhum dado de planejamento ou apontamento para colaboradores ativos neste período.")
     else:
-            st.info("Selecione um período no filtro do Gantt para visualizar o balanço de capacidade.")
+        st.info("Nenhum planejamento registrado para a escala selecionada.")
 
     st.markdown("---")
         
@@ -4046,27 +4138,31 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res['Desvio Engenharia'] = df_res['Consumption per lot size'] - df_res['qtd_ini']
                         df_res['Desvio Fábrica'] = df_res['Quantity'] - df_res['Consumption per lot size'] 
                         
+                        # --- CLASSIFICAÇÃO COM NOMENCLATURAS NOVAS ---
                         def classificar_status(r):
                             if r['Eh_Kanban']: return "Consumo Kanban"
                             metodo = r['Método']
                             if metodo == 'N/A':
                                 if r['qtd_ini'] > 0 or r['Consumption per lot size'] > 0: return "Ignorado (Mão de Obra / Serviço)"
                             if r['Consumption per lot size'] == 0 and r['Quantity'] > 0: return "Alerta: Consumido após Remoção"
-                            if r['Desvio Fábrica'] > 0.001: return "Fábrica: Excedente Operacional"
-                            if r['Desvio Fábrica'] < -0.001: return "Fábrica: Economia Operacional"
+                            
+                            if r['Desvio Fábrica'] > 0.001: return "Consumo Excedente"
+                            if r['Desvio Fábrica'] < -0.001: return "Consumo Abaixo da Qtd BOM"
+                            
                             if r['Desvio Engenharia'] > 0.001:
-                                if r['qtd_ini'] == 0: return "BOM: adição"
+                                if r['qtd_ini'] == 0: return "BOM: Adicionado no Escopo"
                                 else: return "BOM: Aumento de Qtd"
                             if r['Desvio Engenharia'] < -0.001:
-                                if r['Consumption per lot size'] == 0: return "Engenharia: Removido do Escopo"
+                                if r['Consumption per lot size'] == 0: return "BOM: Removido do Escopo"
                                 else: return "BOM: Redução de Qtd"
+                                
                             return "Conforme"
 
                         df_res['Status'] = df_res.apply(classificar_status, axis=1)
                         
                         def calcular_qtd_divergencia(r):
-                            if 'Engenharia' in r['Status']: return r['Desvio Engenharia']
-                            if 'Fábrica' in r['Status'] or 'Alerta' in r['Status']: return r['Desvio Fábrica']
+                            if 'BOM' in r['Status']: return r['Desvio Engenharia']
+                            if 'Consumo Excedente' in r['Status'] or 'Consumo Abaixo' in r['Status'] or 'Alerta' in r['Status']: return r['Desvio Fábrica']
                             return 0.0
 
                         df_res['Qtd Divergência'] = df_res.apply(calcular_qtd_divergencia, axis=1)
@@ -4097,9 +4193,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         custo_kbn = df_final[df_final['Eh_Kanban'] == True]['Custo Real Total'].sum()
         pct_kbn = (custo_kbn / custo_total_mat * 100) if custo_total_mat > 0 else 0
         
-        custo_exc = df_final[df_final['Status'].isin(['Fábrica: Excedente Operacional', 'Alerta: Consumido após Remoção'])]['Impacto Financeiro (R$)'].sum()
-        custo_eco = df_final[df_final['Status'] == 'Fábrica: Economia Operacional']['Impacto Financeiro (R$)'].sum()
-        custo_eng_liq = df_final[df_final['Status'].str.contains('Engenharia')]['Impacto Financeiro (R$)'].sum()
+        custo_exc = df_final[df_final['Status'].isin(['Consumo Excedente', 'Alerta: Consumido após Remoção'])]['Impacto Financeiro (R$)'].sum()
+        custo_eco = df_final[df_final['Status'] == 'Consumo Abaixo da Qtd BOM']['Impacto Financeiro (R$)'].sum()
+        custo_eng_liq = df_final[df_final['Status'].str.contains('BOM')]['Impacto Financeiro (R$)'].sum()
         
         qtd_oh = df_final[df_final['Item'].str.upper() == 'MANUFACTURING OVERHEAD']['Consumption per lot size'].sum()
         valor_oh = qtd_oh * t_oh
@@ -4109,14 +4205,14 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         c1.metric("Custo Total Material", f"R$ {custo_total_mat:,.2f}")
         c2.metric("Proporção Kanban", f"R$ {custo_kbn:,.2f}", f"{pct_kbn:.1f}% do Custo Mat.", delta_color="off")
         c3.metric("Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", f"Economia: R$ {custo_eco:+,.2f}", delta_color="inverse")
-        c4.metric("Diverg. Líquida BOM", f"R$ {custo_eng_liq:+,.2f}", "Balanço: Adições vs Remoções", delta_color="off")
-        
-        # --- ALERTA DE CUSTO ZERO ---
+        c4.metric("Diverg. LÍQUIDA BOM", f"R$ {custo_eng_liq:+,.2f}", "Balanço: Adições vs Remoções", delta_color="off")
+
+        # --- ALERTA DE CUSTO ZERO EM TELA ---
         itens_sem_custo = df_final[(df_final['Quantity'] > 0) & (df_final['Custo Unitário'] == 0) & (~df_final['Eh_Kanban'])]
         qtd_sem_custo = len(itens_sem_custo)
         
         if qtd_sem_custo > 0:
-            st.warning(f"⚠️ **Alerta de Precificação:** A fábrica consumiu {qtd_sem_custo} itens que estão com o Custo Unitário zerado (R$ 0,00) tanto na BOM quanto no ERP.")
+            st.warning(f"⚠️ **Alerta de Precificação:** Detectamos {qtd_sem_custo} item(ns) consumido(s) pela fábrica, mas que estão com Custo Unitário R$ 0,00 no sistema (ERP/BOM).")
 
         col_graf1, col_graf2 = st.columns(2)
         with col_graf1:
@@ -4150,27 +4246,27 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
         dict_exc, dict_eco, dict_eng = {}, {}, {}
 
-        mask_exc = df_final['Status'].isin(['Fábrica: Excedente Operacional', 'Alerta: Consumido após Remoção'])
+        mask_exc = df_final['Status'].isin(['Consumo Excedente', 'Alerta: Consumido após Remoção'])
         if mask_exc.any():
-            st.markdown("#### 📉 1. Consumo Excedente")
+            st.markdown("#### 📉 1. Excedentes e Furos Críticos de Fábrica")
             df_exc = df_final[mask_exc][['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
             df_exc['Impacto_Abs'] = df_exc['Impacto Financeiro (R$)'].abs()
             df_exc = df_exc.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
             tab_exc = st.data_editor(df_exc, column_config=col_config, use_container_width=True, hide_index=True, key="tab_exc")
             dict_exc = dict(zip(tab_exc['Item'], tab_exc['Motivo']))
 
-        mask_eco = df_final['Status'] == 'Fábrica: Economia Operacional'
+        mask_eco = df_final['Status'] == 'Consumo Abaixo da Qtd BOM'
         if mask_eco.any():
-            st.markdown("#### 📈 2. Consumo Abaixo do Previsto")
+            st.markdown("#### 📈 2. Economias de Fábrica")
             df_eco = df_final[mask_eco][['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
             df_eco['Impacto_Abs'] = df_eco['Impacto Financeiro (R$)'].abs()
             df_eco = df_eco.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
             tab_eco = st.data_editor(df_eco, column_config=col_config, use_container_width=True, hide_index=True, key="tab_eco")
             dict_eco = dict(zip(tab_eco['Item'], tab_eco['Motivo']))
 
-        mask_eng = df_final['Status'].str.contains('Engenharia')
+        mask_eng = df_final['Status'].str.contains('BOM')
         if mask_eng.any():
-            st.markdown("#### 📐 3. Divergências de BOM")
+            st.markdown("#### 📐 3. Divergências de Estrutura (BOM)")
             df_eng = df_final[mask_eng][['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
             df_eng['Impacto_Abs'] = df_eng['Impacto Financeiro (R$)'].abs()
             df_eng = df_eng.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
@@ -4183,7 +4279,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         st.markdown("---")
         st.markdown("### 📊 Visão Gerencial: Impacto Financeiro por Causa Raiz")
         
-        mask_motivo_grafico = (df_final['Status'].str.contains('Fábrica:|Engenharia:|Alerta:')) & (df_final['Motivo'] != 'Não Informado')
+        mask_motivo_grafico = (df_final['Status'].str.contains('Consumo Excedente|Consumo Abaixo da Qtd BOM|BOM:|Alerta:')) & (df_final['Motivo'] != 'Não Informado')
         df_graf_motivos = df_final[mask_motivo_grafico].copy()
         
         if not df_graf_motivos.empty:
@@ -4211,7 +4307,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                 except: pass
                 conn.commit()
                 
-                df_gravar = df_final[df_final['Status'].str.contains('Fábrica:|Engenharia:|Alerta:')]
+                df_gravar = df_final[df_final['Status'].str.contains('Consumo Excedente|Consumo Abaixo da Qtd BOM|BOM:|Alerta:')]
                 for _, r in df_gravar.iterrows():
                     cursor.execute("""
                         INSERT INTO auditoria_3vias_historico 
@@ -4253,9 +4349,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     story.append(Paragraph(f"<b>Data da Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')} | <b>BOM de Referência:</b> {st.session_state.get('nome_bom_base', 'Desconhecido')}", subtitle_style))
 
                     story.append(Paragraph("1. Sumário Financeiro da Ordem", header_style))
-                    # Você precisará calcular a variável novamente aqui dentro do botão do PDF:
-                    qtd_sem_custo = len(df_final[(df_final['Quantity'] > 0) & (df_final['Custo Unitário'] == 0) & (~df_final['Eh_Kanban'])])
-
+                    
+                    # --- REINCLUINDO A LINHA DO ALERTA DE PRECIFICAÇÃO NO PDF ---
+                    qtd_sem_custo_pdf = len(df_final[(df_final['Quantity'] > 0) & (df_final['Custo Unitário'] == 0) & (~df_final['Eh_Kanban'])])
+                    
                     data_kpi = [
                         ["Indicador Analisado", "Valor (R$ / H)", "Detalhes / Composição"],
                         ["Manufacturing Overhead", f"R$ {valor_oh:,.2f}", f"Fator OH: {t_oh}"],
@@ -4264,8 +4361,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         ["Custo Consumo Kanban", f"R$ {custo_kbn:,.2f}", f"{pct_kbn:.1f}% do Custo Material"],
                         ["Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", "Excedentes Operacionais e Furos"],
                         ["Economia de Fábrica", f"R$ {custo_eco:+,.2f}", "Consumo abaixo do orçado"],
-                        ["Divergência Líq. Engenharia", f"R$ {custo_eng_liq:+,.2f}", "Balanço (Adições vs Remoções)"],
-                        ["Alertas de Precificação", f"{qtd_sem_custo} Itens", "Consumidos com valor R$ 0,00"] # <--- AQUI!
+                        ["Divergência Líq. BOM", f"R$ {custo_eng_liq:+,.2f}", "Balanço (Adições vs Remoções)"],
+                        ["Alertas de Precificação", f"{qtd_sem_custo_pdf} Item(ns)", "Consumidos com valor de R$ 0,00"]
                     ]
                     
                     t_kpi = Table(data_kpi, colWidths=[180, 120, 180])
@@ -4273,27 +4370,22 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     story.append(t_kpi)
                     story.append(Spacer(1, 15))
 
-                    # --- CORREÇÃO VISUAL PDF: Gráficos EMPILHADOS na Vertical (2x1) ---
-                    story.append(Paragraph("2. Diagnóstico Executivo", header_style))
+                    story.append(Paragraph("2. Diagnóstico Executivo de Causa Raiz", header_style))
                     
-                    # Usa uma grade de 2 linhas e 1 coluna, ajustando a proporção para caber perfeitamente na página 1
                     fig_pdf, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 7.5), facecolor='white', gridspec_kw={'height_ratios': [1, 1.2]})
                     
-                    # Gráfico Topo: Rosca Limpa
                     dados_r = df_graficos.groupby('Status')['Item'].count()
                     if not dados_r.empty:
                         pcts = 100. * dados_r.values / dados_r.values.sum()
                         labels_leg = [f"{idx} ({p:.1f}%)" for idx, p in zip(dados_r.index, pcts)]
                         
                         wedges, texts = ax1.pie(dados_r.values, startangle=140, colors=plt.cm.Paired.colors)
-                        # A legenda fica perfeitamente alinhada à direita do gráfico de rosca
                         ax1.legend(wedges, labels_leg, title="Status", loc="center left", bbox_to_anchor=(0.9, 0.5), fontsize=8)
                         centre_circle = plt.Circle((0,0), 0.55, fc='white')
                         ax1.add_artist(centre_circle)
                         ax1.set_title("Conformidade (Por Qtd. de Itens)", fontsize=11, fontweight='bold', color='#003366', pad=15)
                         
-                    # Gráfico Base: Causa Raiz (Usa a largura inteira)
-                    df_mot_pdf = df_final[(df_final['Status'].str.contains('Fábrica:|Engenharia:|Alerta:')) & (df_final['Motivo'] != 'Não Informado')].copy()
+                    df_mot_pdf = df_final[(df_final['Status'].str.contains('Consumo Excedente|Consumo Abaixo da Qtd BOM|BOM:|Alerta:')) & (df_final['Motivo'] != 'Não Informado')].copy()
                     if not df_mot_pdf.empty:
                         df_agrup_pdf = df_mot_pdf.groupby('Motivo')['Impacto Financeiro (R$)'].sum().reset_index()
                         df_agrup_pdf = df_agrup_pdf.sort_values(by='Impacto Financeiro (R$)', ascending=True)
@@ -4323,13 +4415,12 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         ax2.text(0.5, 0.5, "Classifique os motivos na tela\npara gerar este gráfico.", ha='center', va='center', fontsize=10, color='grey')
                         ax2.axis('off')
 
-                    fig_pdf.tight_layout(pad=2.0) # Garante que os gráficos não colem um no outro
+                    fig_pdf.tight_layout(pad=2.0) 
                     buf_p = BytesIO()
                     fig_pdf.savefig(buf_p, format='png', dpi=300, bbox_inches='tight')
                     buf_p.seek(0)
                     plt.close(fig_pdf)
                     
-                    # Dimensões calculadas a dedo para não vazar para a página 2 (mantendo o sumário na 1)
                     story.append(RLImage(buf_p, width=470, height=410))
                     story.append(PageBreak())
                     
@@ -4351,20 +4442,20 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         story.append(t)
                         story.append(Spacer(1, 15))
 
-                    df_exc = df_final[df_final['Status'].isin(['Fábrica: Excedente Operacional', 'Alerta: Consumido após Remoção'])].copy()
-                    add_tabela_pdf_motivo(df_exc, "3.1 Detalhamento: Consumo Excedente")
+                    df_exc = df_final[df_final['Status'].isin(['Consumo Excedente', 'Alerta: Consumido após Remoção'])].copy()
+                    add_tabela_pdf_motivo(df_exc, "3.1 Detalhamento: Excedentes e Furos Operacionais")
                     
-                    df_eco = df_final[df_final['Status'] == 'Fábrica: Economia Operacional'].copy()
-                    add_tabela_pdf_motivo(df_eco, "3.2 Detalhamento: Consumo Abaixo do Previsto")
+                    df_eco = df_final[df_final['Status'] == 'Consumo Abaixo da Qtd BOM'].copy()
+                    add_tabela_pdf_motivo(df_eco, "3.2 Detalhamento: Economias de Fábrica")
                     
-                    df_eng = df_final[df_final['Status'].str.contains('Engenharia')].copy()
-                    add_tabela_pdf_motivo(df_eng, "3.3 Detalhamento: Divergências de BOM")
+                    df_eng = df_final[df_final['Status'].str.contains('BOM')].copy()
+                    add_tabela_pdf_motivo(df_eng, "3.3 Detalhamento: Divergências de BOM (Estrutura)")
                     
                     df_kbn_pdf = df_final[df_final['Status'] == 'Consumo Kanban'].sort_values(by='Custo Real Total', ascending=False).copy()
                     df_kbn_pdf = df_kbn_pdf[df_kbn_pdf['Quantity'] > 0].head(20)
                     
                     if not df_kbn_pdf.empty:
-                        story.append(Paragraph("3.4 Detalhamento: Itens Kanban", header_style))
+                        story.append(Paragraph("3.4 Detalhamento: Itens Kanban (Top 20 Custos)", header_style))
                         t_data = [["Item", "Descrição", "Qtd Consumida", "Custo Total (R$)"]]
                         for _, r in df_kbn_pdf.iterrows():
                             t_data.append([str(r['Item']), str(r['Descrição'])[:35], f"{r['Quantity']:.2f}", f"R$ {r['Custo Real Total']:,.2f}"])
