@@ -4025,7 +4025,7 @@ elif menu_selecionado == "📈 Painel Executivo (BI)":
 # ABA: AUDITORIA 3-WAY & RELATÓRIO PDF EXECUTIVO
 # ------------------------------------------
 elif menu_selecionado == "📊 Auditoria BOM vs Real":
-    st.markdown("## 📊 Auditoria de Custos: 3-Way Match (Visão Executiva)")
+    st.markdown("## 📊 Auditoria de Custos por Projeto")
     st.write("Compare a **BOM Inicial** com a **BOM Final** e o **Consumo Real** para isolar desvios e causas raízes.")
 
     df_params = pd.read_sql_query("SELECT parametro, valor FROM parametros_custos", engine)
