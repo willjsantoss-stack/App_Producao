@@ -3895,7 +3895,7 @@ elif menu_selecionado == "📈 Painel Executivo (BI)":
         st.info("O banco de dados ainda não possui registros de apontamentos.")
 
 # ------------------------------------------
-# ABA: AUDITORIA 3-WAY & RELATÓRIO PDF
+# ABA: AUDITORIA 3-WAY & RELATÓRIO PDF EXECUTIVO
 # ------------------------------------------
 elif menu_selecionado == "📊 Auditoria BOM vs Real":
     st.markdown("## 📊 Auditoria de Custos: 3-Way Match (Engenharia vs Fábrica)")
@@ -3917,147 +3917,276 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
             if not file_bom_fin or not file_real:
                 st.error("❌ A BOM Final e o Consumo Real são obrigatórios para a análise.")
             else:
-                try:
-                    # Leitura BOM Final
-                    df_fin = pd.read_csv(file_bom_fin, sep=';', encoding='latin1') if file_bom_fin.name.endswith('.csv') else pd.read_excel(file_bom_fin)
-                    if 'Cost per unit' in df_fin.columns and 'Cost price per unit' not in df_fin.columns:
-                        df_fin.rename(columns={'Cost per unit': 'Cost price per unit'}, inplace=True)
-                    df_fin['Item/Resource'] = df_fin['Item/Resource'].astype(str).str.strip()
-                    
-                    agg_fin = {'Consumption per lot size': 'sum', 'Cost price per unit': 'max', 'Description': 'first'}
-                    if 'Processing method' in df_fin.columns: agg_fin['Processing method'] = 'first'
-                    df_bom_f = df_fin.groupby('Item/Resource').agg(agg_fin).reset_index()
+                with st.spinner("Analisando cruzamento de dados..."):
+                    try:
+                        # Leitura BOM Final
+                        df_fin = pd.read_csv(file_bom_fin, sep=';', encoding='latin1') if file_bom_fin.name.endswith('.csv') else pd.read_excel(file_bom_fin)
+                        if 'Cost per unit' in df_fin.columns and 'Cost price per unit' not in df_fin.columns:
+                            df_fin.rename(columns={'Cost per unit': 'Cost price per unit'}, inplace=True)
+                        df_fin['Item/Resource'] = df_fin['Item/Resource'].astype(str).str.strip()
+                        
+                        agg_fin = {'Consumption per lot size': 'sum', 'Cost price per unit': 'max', 'Description': 'first'}
+                        df_bom_f = df_fin.groupby('Item/Resource').agg(agg_fin).reset_index()
 
-                    # Leitura BOM Inicial (Se houver)
-                    if file_bom_ini:
-                        df_ini = pd.read_csv(file_bom_ini, sep=';', encoding='latin1') if file_bom_ini.name.endswith('.csv') else pd.read_excel(file_bom_ini)
-                        df_ini['Item/Resource'] = df_ini['Item/Resource'].astype(str).str.strip()
-                        df_bom_i = df_ini.groupby('Item/Resource')['Consumption per lot size'].sum().reset_index().rename(columns={'Consumption per lot size': 'qtd_ini'})
-                    else:
-                        df_bom_i = df_bom_f[['Item/Resource']].copy()
-                        df_bom_i['qtd_ini'] = df_bom_f['Consumption per lot size'] # Assume igual se não enviada
+                        # Leitura BOM Inicial (Se houver)
+                        if file_bom_ini:
+                            df_ini = pd.read_csv(file_bom_ini, sep=';', encoding='latin1') if file_bom_ini.name.endswith('.csv') else pd.read_excel(file_bom_ini)
+                            df_ini['Item/Resource'] = df_ini['Item/Resource'].astype(str).str.strip()
+                            df_bom_i = df_ini.groupby('Item/Resource')['Consumption per lot size'].sum().reset_index().rename(columns={'Consumption per lot size': 'qtd_ini'})
+                        else:
+                            df_bom_i = df_bom_f[['Item/Resource']].copy()
+                            df_bom_i['qtd_ini'] = df_bom_f['Consumption per lot size']
 
-                    # Leitura Consumo Real
-                    df_r = pd.read_csv(file_real, sep=';', encoding='latin1') if file_real.name.endswith('.csv') else pd.read_excel(file_real)
-                    df_r['Item number'] = df_r['Item number'].astype(str).str.strip()
-                    if 'Physical cost amount' not in df_r.columns: df_r['Physical cost amount'] = 0.0
-                    df_real_agg = df_r.groupby('Item number').agg({'Quantity': 'sum', 'Financial cost amount': 'sum', 'Physical cost amount': 'sum'}).reset_index()
+                        # Leitura Consumo Real
+                        df_r = pd.read_csv(file_real, sep=';', encoding='latin1') if file_real.name.endswith('.csv') else pd.read_excel(file_real)
+                        df_r['Item number'] = df_r['Item number'].astype(str).str.strip()
+                        if 'Physical cost amount' not in df_r.columns: df_r['Physical cost amount'] = 0.0
+                        df_real_agg = df_r.groupby('Item number').agg({'Quantity': 'sum', 'Financial cost amount': 'sum', 'Physical cost amount': 'sum'}).reset_index()
 
-                    # Carrega Fáscias/Itens a Ignorar do Banco
-                    df_ign = pd.read_sql_query("SELECT codigo FROM itens_ignorados_auditoria", engine)
-                    lista_ign = df_ign['codigo'].astype(str).tolist()
+                        # Carrega Listas do Banco (Fáscias e Kanban)
+                        lista_ign = pd.read_sql_query("SELECT codigo FROM itens_ignorados_auditoria", engine)['codigo'].astype(str).tolist()
+                        lista_kbn = pd.read_sql_query("SELECT codigo FROM itens_kanban", engine)['codigo'].astype(str).tolist()
 
-                    # Cruzamento 3-Way Match
-                    df_m1 = pd.merge(df_bom_f, df_bom_i, on='Item/Resource', how='outer').fillna(0)
-                    df_res = pd.merge(df_m1, df_real_agg, left_on='Item/Resource', right_on='Item number', how='outer', suffixes=('_bom', '_real'))
-                    
-                    df_res['Item'] = df_res['Item/Resource'].fillna(df_res['Item number'])
-                    df_res['Descrição'] = df_res['Description'].fillna("Item Extra")
-                    
-                    # Remove Fáscias de Matéria-Prima cadastradas para ignorar
-                    df_res = df_res[~df_res['Item'].astype(str).isin(lista_ign)].copy()
+                        # Cruzamento 3-Way Match
+                        df_m1 = pd.merge(df_bom_f, df_bom_i, on='Item/Resource', how='outer').fillna(0)
+                        df_res = pd.merge(df_m1, df_real_agg, left_on='Item/Resource', right_on='Item number', how='outer', suffixes=('_bom', '_real'))
+                        
+                        df_res['Item'] = df_res['Item/Resource'].fillna(df_res['Item number']).astype(str).str.strip()
+                        df_res['Descrição'] = df_res['Description'].fillna("Item Extra/Fábrica")
+                        
+                        # 1. Filtro: Remove Fáscias de Matéria-Prima
+                        df_res = df_res[~df_res['Item'].isin(lista_ign)].copy()
 
-                    # Normalização numérica
-                    for col in ['Consumption per lot size', 'qtd_ini', 'Quantity', 'Financial cost amount', 'Physical cost amount', 'Cost price per unit']:
-                        if col in df_res.columns: df_res[col] = df_res[col].fillna(0).astype(float)
+                        # Normalização numérica
+                        for col in ['Consumption per lot size', 'qtd_ini', 'Quantity', 'Financial cost amount', 'Physical cost amount', 'Cost price per unit']:
+                            if col in df_res.columns: df_res[col] = df_res[col].fillna(0).astype(float)
 
-                    df_res['Custo Real Total'] = df_res.apply(lambda r: r['Financial cost amount'] if r['Financial cost amount'] != 0 else r['Physical cost amount'], axis=1)
-                    df_res['Custo Unitário'] = df_res.apply(lambda r: abs(r['Custo Real Total'] / r['Quantity']) if r['Quantity'] != 0 else r['Cost price per unit'], axis=1)
+                        # Custos e Saldo Matemático
+                        df_res['Custo Real Total'] = df_res.apply(lambda r: r['Financial cost amount'] if r['Financial cost amount'] != 0 else r['Physical cost amount'], axis=1)
+                        df_res['Custo Unitário'] = df_res.apply(lambda r: abs(r['Custo Real Total'] / r['Quantity']) if r['Quantity'] != 0 else r['Cost price per unit'], axis=1)
+                        
+                        df_res['Desvio Engenharia'] = df_res['Consumption per lot size'] - df_res['qtd_ini']
+                        df_res['Desvio Fábrica'] = df_res['Quantity'].abs() - df_res['Consumption per lot size']
+                        df_res['Impacto Financeiro (R$)'] = df_res['Desvio Fábrica'].abs() * df_res['Custo Unitário']
+                        
+                        # 2. Identificação de Kanban
+                        df_res['Eh_Kanban'] = df_res['Item'].isin(lista_kbn)
 
-                    # Desvios Matemáticos
-                    df_res['Desvio Engenharia'] = df_res['Consumption per lot size'] - df_res['qtd_ini'] # Mudança na BOM
-                    df_res['Desvio Fábrica'] = df_res['Quantity'].abs() - df_res['Consumption per lot size'] # Consumo vs BOM Final
-                    df_res['Impacto Financeiro (R$)'] = df_res['Desvio Fábrica'].abs() * df_res['Custo Unitário']
+                        def classificar_status(r):
+                            if r['Eh_Kanban']: return "Consumo Kanban"
+                            if r['qtd_ini'] == 0 and r['Consumption per lot size'] > 0: return "Adicionado Engenharia"
+                            if r['Consumption per lot size'] == 0 and r['qtd_ini'] > 0: return "Removido Engenharia"
+                            if r['Desvio Fábrica'] > 0.001: return "Excedente de Fábrica"
+                            if r['Desvio Fábrica'] < -0.001: return "Economia de Fábrica"
+                            return "Conforme"
 
-                    def classificar_status(r):
-                        if r['qtd_ini'] == 0 and r['Consumption per lot size'] > 0: return "Adicionado pela Engenharia"
-                        if r['Consumption per lot size'] == 0 and r['qtd_ini'] > 0: return "Removido pela Engenharia"
-                        if r['Desvio Fábrica'] > 0.001: return "Excedente de Fábrica (Refugo/Perda)"
-                        if r['Desvio Fábrica'] < -0.001: return "Economia de Fábrica"
-                        return "Conforme"
+                        df_res['Status'] = df_res.apply(classificar_status, axis=1)
+                        
+                        st.session_state['res_audit_3way'] = df_res
+                        st.session_state['nome_bom_base'] = file_bom_fin.name
+                        st.success("✔️ Análise Matemática concluída!")
+                    except Exception as e:
+                        st.error(f"Erro ao processar planilhas: {e}")
 
-                    df_res['Status'] = df_res.apply(classificar_status, axis=1)
-                    st.session_state['res_audit_3way'] = df_res
-                    st.success("✔️ Cruzamento de 3 vias concluído com sucesso!")
-                except Exception as e:
-                    st.error(f"Erro ao processar planilhas: {e}")
+    # --- RENDERIZAÇÃO DO DASHBOARD INTERATIVO ANTES DO PDF ---
+    if 'res_audit_3way' in st.session_state:
+        df_final = st.session_state['res_audit_3way']
+        
+        st.markdown("---")
+        st.markdown("### 📈 Painel Analítico de Custos (Prévia)")
+        
+        # Cálculos de KPI Principais
+        mask_mat = df_final['Item'].str.upper() != 'MANUFACTURING OVERHEAD'
+        custo_total_mat = df_final[mask_mat]['Custo Real Total'].abs().sum()
+        
+        custo_kbn = df_final[df_final['Eh_Kanban'] == True]['Custo Real Total'].abs().sum()
+        pct_kbn = (custo_kbn / custo_total_mat * 100) if custo_total_mat > 0 else 0
+        
+        custo_exc = df_final[df_final['Status'] == 'Excedente de Fábrica']['Impacto Financeiro (R$)'].sum()
+        custo_eco = df_final[df_final['Status'] == 'Economia de Fábrica']['Impacto Financeiro (R$)'].sum()
+        custo_eng_add = df_final[df_final['Status'] == 'Adicionado Engenharia']['Custo Real Total'].abs().sum()
+        
+        qtd_oh = df_final[df_final['Item'].str.upper() == 'MANUFACTURING OVERHEAD']['Consumption per lot size'].sum()
+        valor_oh = qtd_oh * t_oh
+        horas_totais = qtd_oh / t_hh if t_hh > 0 else 0
 
-        if 'res_audit_3way' in st.session_state:
-            df_final = st.session_state['res_audit_3way']
+        # Termômetros
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Custo Total Material", f"R$ {custo_total_mat:,.2f}")
+        c2.metric("Proporção Kanban", f"R$ {custo_kbn:,.2f}", f"{pct_kbn:.1f}% do Custo Mat.", delta_color="off")
+        c3.metric("Excedente (Fábrica)", f"R$ {custo_exc:,.2f}", f"Economia: R$ {custo_eco:,.2f}", delta_color="inverse")
+        c4.metric("Adicionado (Engenharia)", f"R$ {custo_eng_add:,.2f}", "Custo Extra Estrutura", delta_color="off")
 
-            st.markdown("---")
-            st.markdown("### 💾 Salvar no Banco e Gerar Relatório PDF")
+        # Gráficos de Tela
+        cg1, cg2 = st.columns(2)
+        with cg1:
+            df_pie = df_final.groupby('Status')['Item'].count().reset_index()
+            fig_pie = px.pie(df_pie, names='Status', values='Item', hole=0.4, title="Conformidade Geral de Itens")
+            st.plotly_chart(fig_pie, use_container_width=True)
             
-            col_b1, col_b2 = st.columns(2)
-            
-            if col_b1.button("📥 Gravar Histórico no Banco de Dados", type="primary", use_container_width=True):
-                with st.spinner("Gravando..."):
-                    for _, r in df_final.iterrows():
-                        cursor.execute("""
-                            INSERT INTO auditoria_3vias_historico 
-                            (data_auditoria, item, descricao, qtd_bom_inicial, qtd_bom_final, qtd_real, desvio_engenharia, desvio_fabrica, valor_impacto, status)
-                            VALUES (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """, (
-                            r['Item'], r['Descrição'], r['qtd_ini'], r['Consumption per lot size'], 
-                            r['Quantity'], r['Desvio Engenharia'], r['Desvio Fábrica'], 
-                            r['Impacto Financeiro (R$)'], r['Status']
-                        ))
-                    conn.commit()
-                    st.success("✔️ Dados gravados com sucesso na tabela de histórico!")
+        with cg2:
+            df_bar = df_final[df_final['Status'].isin(['Excedente de Fábrica', 'Adicionado Engenharia'])]
+            df_bar = df_bar.sort_values(by='Impacto Financeiro (R$)', ascending=True).tail(10)
+            if not df_bar.empty:
+                fig_bar = px.bar(df_bar, x='Impacto Financeiro (R$)', y='Item', orientation='h', 
+                                 title="Top 10 Itens: Maior Impacto Financeiro (R$)", color='Status',
+                                 color_discrete_map={'Excedente de Fábrica': '#dc3545', 'Adicionado Engenharia': '#fd7e14'})
+                st.plotly_chart(fig_bar, use_container_width=True)
+            else:
+                st.info("Nenhum item com desvio financeiro para listar.")
 
-            # --- GERAÇÃO DO RELATÓRIO PDF EXECUTIVO ---
-            if col_b2.button("📄 Gerar Relatório Executivo em PDF", use_container_width=True):
+        st.markdown("---")
+        st.markdown("### 💾 Salvar e Exportar Auditoria")
+        col_b1, col_b2 = st.columns(2)
+        
+        # 1. SALVAR NO BANCO DE DADOS
+        if col_b1.button("📥 Gravar Histórico de Diferenças no Banco", type="primary", use_container_width=True):
+            with st.spinner("Gravando desvios..."):
+                df_gravar = df_final[df_final['Status'] != 'Conforme']
+                for _, r in df_gravar.iterrows():
+                    cursor.execute("""
+                        INSERT INTO auditoria_3vias_historico 
+                        (data_auditoria, item, descricao, qtd_bom_inicial, qtd_bom_final, qtd_real, desvio_engenharia, desvio_fabrica, valor_impacto, status)
+                        VALUES (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        r['Item'], r['Descrição'], r['qtd_ini'], r['Consumption per lot size'], 
+                        r['Quantity'], r['Desvio Engenharia'], r['Desvio Fábrica'], 
+                        r['Impacto Financeiro (R$)'], r['Status']
+                    ))
+                conn.commit()
+                st.success(f"✔️ {len(df_gravar)} desvios gravados no banco de dados!")
+
+        # 2. GERAR O PDF EXECUTIVO (ESTILO KARDEX/ZOPONE)
+        if col_b2.button("📄 Gerar Relatório Executivo Oficial (PDF)", use_container_width=True):
+            with st.spinner("Construindo documento executivo..."):
                 try:
                     from reportlab.lib.pagesizes import A4
-                    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-                    from reportlab.lib.styles import getSampleStyleSheet
+                    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+                    from reportlab.platypus import Image as RLImage
+                    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
                     from reportlab.lib import colors
                     from io import BytesIO
+                    import matplotlib.pyplot as plt
                     
                     pdf_buffer = BytesIO()
                     doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
                     story = []
                     styles = getSampleStyleSheet()
+                    title_style = ParagraphStyle(name='Title', parent=styles['Heading1'], alignment=1, spaceAfter=20, textColor=colors.HexColor("#003366"))
 
-                    # Título do Relatório
-                    story.append(Paragraph("<b>RELATÓRIO EXECUTIVO DE AUDITORIA - 3-WAY MATCH</b>", styles['Heading1']))
-                    story.append(Paragraph(f"<b>Data de Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
+                    # Cabeçalho
+                    story.append(Paragraph("VALIDAÇÃO DE CONSUMO - 3 WAY MATCH", title_style))
+                    story.append(Paragraph(f"<b>Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')} | <b>BOM Base:</b> {st.session_state['nome_bom_base']}", styles['Normal']))
                     story.append(Spacer(1, 15))
 
-                    # Tabela Resumo no PDF
-                    story.append(Paragraph("<b>Divergências de Engenharia e Fábrica</b>", styles['Heading2']))
+                    # 1. Resumo Executivo (Tabela KPI)
+                    story.append(Paragraph("<b>1. Resumo Executivo (KPIs)</b>", styles['Heading2']))
+                    data_kpi = [
+                        ["Indicador Analisado", "Valor (R$ / H)", "Detalhes / Composição"],
+                        ["Manufacturing Overhead", f"R$ {valor_oh:,.2f}", f"Fator OH: {t_oh}"],
+                        ["Horas Totais Plan.", f"{horas_totais:,.2f} h", f"Fator HH: {t_hh}"],
+                        ["Custo Total Material", f"R$ {custo_total_mat:,.2f}", "Material Aplicado Geral"],
+                        ["Custo Kanban", f"R$ {custo_kbn:,.2f}", f"{pct_kbn:.1f}% do Custo Material"],
+                        ["Custo Excedente (Fábrica)", f"R$ {custo_exc:,.2f}", "Desperdício / Refugo Operacional"],
+                        ["Economia (Fábrica)", f"R$ {custo_eco:,.2f}", "Abaixo do orçado pela Engenharia"],
+                        ["Adicionado (Engenharia)", f"R$ {custo_eng_add:,.2f}", "Erro de Estrutura Inicial"]
+                    ]
                     
-                    df_print = df_final[df_final['Status'] != 'Conforme'].head(25) # Top ocorrências
-                    t_data = [["Item", "Descrição", "BOM Ini", "BOM Fin", "Real", "Status"]]
-                    for _, r in df_print.iterrows():
-                        t_data.append([str(r['Item']), str(r['Descrição'])[:25], f"{r['qtd_ini']:.1f}", f"{r['Consumption per lot size']:.1f}", f"{r['Quantity']:.1f}", str(r['Status'])])
-
-                    t_pdf = Table(t_data, colWidths=[65, 170, 50, 50, 50, 150])
-                    t_pdf.setStyle(TableStyle([
-                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#004a99")),
+                    t_kpi = Table(data_kpi, colWidths=[160, 120, 200])
+                    t_kpi.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#333333")),
                         ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
                         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                        ('FONTSIZE', (0,0), (-1,-1), 8),
-                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('BACKGROUND', (0,1), (-1,-1), colors.HexColor("#fdfdfd")),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey)
                     ]))
-                    story.append(t_pdf)
+                    story.append(t_kpi)
+                    story.append(PageBreak())
+
+                    # 2. Análise Gráfica (Gerando imagens na memória)
+                    story.append(Paragraph("<b>2. Análise Gráfica de Desvios</b>", styles['Heading2']))
+                    
+                    # Gráfico Pizza Matplotlib
+                    fig_p, ax_p = plt.subplots(figsize=(6, 3.5), facecolor='white')
+                    dados_r = df_final.groupby('Status')['Item'].count()
+                    if not dados_r.empty:
+                        ax_p.pie(dados_r.values, labels=dados_r.index, autopct='%1.1f%%', startangle=90, colors=plt.cm.Paired.colors)
+                    fig_p.tight_layout()
+                    buf_p = BytesIO()
+                    fig_p.savefig(buf_p, format='png', dpi=120)
+                    buf_p.seek(0)
+                    plt.close(fig_p)
+                    
+                    story.append(Paragraph("<b>Proporção de Conformidade e Desvios</b>", styles['Heading3']))
+                    story.append(RLImage(buf_p, width=380, height=220))
+                    story.append(Spacer(1, 20))
+
+                    # 3. Detalhamento em Tabelas Isoladas
+                    story.append(PageBreak())
+                    story.append(Paragraph("<b>3. Detalhamento de Desvios Top 20 (Por Categoria)</b>", styles['Heading2']))
+                    
+                    def add_tabela_pdf(df_sub, titulo, desc_coluna):
+                        if df_sub.empty: return
+                        story.append(Paragraph(f"<b>Tabela: {titulo}</b>", styles['Heading3']))
+                        
+                        df_top = df_sub.sort_values(by='Impacto Financeiro (R$)', ascending=False).head(20)
+                        tot_val = df_sub['Impacto Financeiro (R$)'].sum()
+                        
+                        t_data = [["Item", "Descrição", desc_coluna, "Valor (R$)"]]
+                        for _, r in df_top.iterrows():
+                            t_data.append([str(r['Item']), str(r['Descrição'])[:35], f"{r['Desvio Fábrica'] if 'Fábrica' in titulo else r['Desvio Engenharia']:.2f}", f"R$ {r['Impacto Financeiro (R$)']:,.2f}"])
+                        t_data.append(['-', 'TOTAL DA CATEGORIA', '-', f"R$ {tot_val:,.2f}"])
+                        
+                        t = Table(t_data, colWidths=[70, 250, 70, 90])
+                        t.setStyle(TableStyle([
+                            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#444444")),
+                            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                            ('FONTSIZE', (0,0), (-1,-1), 8),
+                            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+                            ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#e2e8f0"))
+                        ]))
+                        story.append(t)
+                        story.append(Spacer(1, 15))
+
+                    add_tabela_pdf(df_final[df_final['Status'] == 'Excedente de Fábrica'], "Excedente de Fábrica (Refugo/Perda)", "Qtd Perdida")
+                    add_tabela_pdf(df_final[df_final['Status'] == 'Economia de Fábrica'], "Economia de Fábrica (Abaixo do Orçado)", "Qtd Poupada")
+                    add_tabela_pdf(df_final[df_final['Status'] == 'Adicionado Engenharia'], "Adicionado pela Engenharia (Pós-Abertura)", "Qtd Adicionada")
+                    
+                    # Tabela exclusiva para Kanban
+                    df_kbn_pdf = df_final[df_final['Status'] == 'Consumo Kanban'].sort_values(by='Custo Real Total', ascending=False).head(20)
+                    if not df_kbn_pdf.empty:
+                        story.append(Paragraph(f"<b>Tabela: Itens Kanban (Top 20 Custos)</b>", styles['Heading3']))
+                        t_data = [["Item", "Descrição", "Qtd Consumida", "Custo Total (R$)"]]
+                        for _, r in df_kbn_pdf.iterrows():
+                            t_data.append([str(r['Item']), str(r['Descrição'])[:35], f"{r['Quantity']:.2f}", f"R$ {r['Custo Real Total']:,.2f}"])
+                        t_data.append(['-', 'TOTAL KANBAN GERAL', '-', f"R$ {custo_kbn:,.2f}"])
+                        
+                        t = Table(t_data, colWidths=[70, 250, 70, 90])
+                        t.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor("#444444")), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTSIZE', (0,0), (-1,-1), 8), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'), ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#e2e8f0"))]))
+                        story.append(t)
+
+                    # 4. Assinaturas
+                    story.append(Spacer(1, 40))
+                    sig = Table([["______________________________________", "______________________________________"], ["Responsável (Preparação)", "Validação Gerencial"]], colWidths=[260, 260])
+                    sig.setStyle(TableStyle([('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 10)]))
+                    story.append(sig)
+
                     doc.build(story)
                     pdf_data = pdf_buffer.getvalue()
 
                     st.download_button(
-                        label="📥 Baixar PDF Executivo para Salvar no Projeto",
+                        label="📥 Baixar Relatório Executivo Zopone (PDF)",
                         data=pdf_data,
-                        file_name=f"Relatorio_Auditoria_3Way_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        file_name=f"Relatorio_Auditoria_{datetime.now().strftime('%Y%m%d')}.pdf",
                         mime="application/pdf",
                         type="primary"
                     )
-                    st.success("✔️ Relatório PDF gerado com sucesso! Pronto para download.")
+                    st.success("✔️ Relatório PDF gerado com sucesso! Pronto para download e assinatura.")
+                except ImportError as e:
+                    st.error(f"❌ Erro de biblioteca não instalada. Verifique o requirements.txt. Detalhe: {e}")
                 except Exception as e:
-                    st.error(f"Erro ao gerar PDF: {e}")
-
-            # Exibição interativa na tela
-            st.markdown("### 📋 Prévia dos Desvios Identificados")
-            st.dataframe(df_final[['Item', 'Descrição', 'qtd_ini', 'Consumption per lot size', 'Quantity', 'Desvio Engenharia', 'Desvio Fábrica', 'Status']].rename(columns={
-                'qtd_ini': 'BOM Inicial', 'Consumption per lot size': 'BOM Final', 'Quantity': 'Consumo Real'
-            }), width="stretch")
+                    st.error(f"❌ Erro na geração do PDF: {e}")
 # Teste de conexão com o GitHub
