@@ -3979,7 +3979,15 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_r = pd.read_csv(file_real, sep=';', encoding='latin1') if file_real.name.endswith('.csv') else pd.read_excel(file_real)
                         df_r.columns = df_r.columns.str.strip()
                         df_r['Item number'] = df_r['Item number'].astype(str).str.strip()
-                        if 'Physical cost amount' not in df_r.columns: df_r['Physical cost amount'] = 0.0
+                        
+                        # --- CORREÇÃO DO ERP: Transforma baixas de estoque negativas em consumo positivo ---
+                        for col_num in ['Quantity', 'Financial cost amount', 'Physical cost amount']:
+                            if col_num in df_r.columns:
+                                df_r[col_num] = pd.to_numeric(df_r[col_num], errors='coerce').fillna(0).abs()
+                        
+                        if 'Physical cost amount' not in df_r.columns: 
+                            df_r['Physical cost amount'] = 0.0
+
                         df_real_agg = df_r.groupby('Item number').agg({'Quantity': 'sum', 'Financial cost amount': 'sum', 'Physical cost amount': 'sum'}).reset_index()
 
                         # Carrega Listas do Banco
@@ -4021,9 +4029,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res['Custo Real Total'] = df_res.apply(lambda r: r['Financial cost amount'] if r['Financial cost amount'] != 0 else r['Physical cost amount'], axis=1)
                         df_res['Custo Unitário'] = df_res.apply(lambda r: abs(r['Custo Real Total'] / r['Quantity']) if r['Quantity'] != 0 else r['Cost price per unit'], axis=1)
                         
-                        # --- MATEMÁTICA PADRONIZADA DE SINAIS ---
-                        # (+ Positivo) = Consumiu a mais ou Adicionou
-                        # (- Negativo) = Consumiu a menos ou Removeu
+                        # --- MATEMÁTICA PURA (+ é Excesso/Adição, - é Economia/Remoção) ---
                         df_res['Desvio Engenharia'] = df_res['Consumption per lot size'] - df_res['qtd_ini']
                         df_res['Desvio Fábrica'] = df_res['Quantity'] - df_res['Consumption per lot size'] 
                         
@@ -4258,7 +4264,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     story.append(RLImage(buf_p, width=480, height=210))
                     story.append(PageBreak())
                     
-                    # --- AS 3 TABELAS MESTRAS NO PDF ---
                     def add_tabela_pdf_motivo(df_sub, titulo):
                         if df_sub.empty: return
                         story.append(Paragraph(f"<b>Tabela: {titulo}</b>", styles['Heading3']))
@@ -4268,7 +4273,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         
                         t_data = [["Item", "Descrição", "Saldo Qtd", "Valor Diferença (R$)", "Motivo"]]
                         for _, r in df_top.iterrows():
-                            # :+.2f força o aparecimento do + ou -
                             t_data.append([str(r['Item']), str(r['Descrição'])[:25], f"{r['Qtd Divergência']:+.2f}", f"R$ {r['Impacto Financeiro (R$)']:,.2f}", str(r.get('Motivo', '-'))])
                         t_data.append(['-', 'TOTAL GERAL DA CATEGORIA', '-', f"R$ {tot_val:,.2f}", '-'])
                         
@@ -4316,5 +4320,4 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     st.success("✔️ Relatório PDF estruturado com sucesso nas 3 tabelas de divergência!")
                 except Exception as e:
                     st.error(f"❌ Erro na geração do PDF: {e}")
-# Teste de conexão com o GitHub
 # Teste de conexão com o GitHub
