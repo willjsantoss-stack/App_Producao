@@ -4110,6 +4110,13 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         c2.metric("Proporção Kanban", f"R$ {custo_kbn:,.2f}", f"{pct_kbn:.1f}% do Custo Mat.", delta_color="off")
         c3.metric("Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", f"Economia: R$ {custo_eco:+,.2f}", delta_color="inverse")
         c4.metric("Diverg. Líquida BOM", f"R$ {custo_eng_liq:+,.2f}", "Balanço: Adições vs Remoções", delta_color="off")
+        
+        # --- ALERTA DE CUSTO ZERO ---
+        itens_sem_custo = df_final[(df_final['Quantity'] > 0) & (df_final['Custo Unitário'] == 0) & (~df_final['Eh_Kanban'])]
+        qtd_sem_custo = len(itens_sem_custo)
+        
+        if qtd_sem_custo > 0:
+            st.warning(f"⚠️ **Alerta de Precificação:** A fábrica consumiu {qtd_sem_custo} itens que estão com o Custo Unitário zerado (R$ 0,00) tanto na BOM quanto no ERP.")
 
         col_graf1, col_graf2 = st.columns(2)
         with col_graf1:
@@ -4246,6 +4253,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     story.append(Paragraph(f"<b>Data da Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')} | <b>BOM de Referência:</b> {st.session_state.get('nome_bom_base', 'Desconhecido')}", subtitle_style))
 
                     story.append(Paragraph("1. Sumário Financeiro da Ordem", header_style))
+                    # Você precisará calcular a variável novamente aqui dentro do botão do PDF:
+                    qtd_sem_custo = len(df_final[(df_final['Quantity'] > 0) & (df_final['Custo Unitário'] == 0) & (~df_final['Eh_Kanban'])])
+
                     data_kpi = [
                         ["Indicador Analisado", "Valor (R$ / H)", "Detalhes / Composição"],
                         ["Manufacturing Overhead", f"R$ {valor_oh:,.2f}", f"Fator OH: {t_oh}"],
@@ -4254,7 +4264,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         ["Custo Consumo Kanban", f"R$ {custo_kbn:,.2f}", f"{pct_kbn:.1f}% do Custo Material"],
                         ["Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", "Excedentes Operacionais e Furos"],
                         ["Economia de Fábrica", f"R$ {custo_eco:+,.2f}", "Consumo abaixo do orçado"],
-                        ["Divergência Líq. BOM", f"R$ {custo_eng_liq:+,.2f}", "Balanço (Adições vs Remoções)"]
+                        ["Divergência Líq. Engenharia", f"R$ {custo_eng_liq:+,.2f}", "Balanço (Adições vs Remoções)"],
+                        ["Alertas de Precificação", f"{qtd_sem_custo} Itens", "Consumidos com valor R$ 0,00"] # <--- AQUI!
                     ]
                     
                     t_kpi = Table(data_kpi, colWidths=[180, 120, 180])
