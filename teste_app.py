@@ -117,6 +117,20 @@ def init_db():
     ''')
     conn.commit()
 
+    # Tabela de Causas Raízes (Motivos de Auditoria)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS motivos_auditoria (
+            motivo TEXT PRIMARY KEY
+        )
+    ''')
+    
+    # Insere as opções padrão se a tabela estiver vazia
+    cursor.execute("SELECT COUNT(*) FROM motivos_auditoria")
+    if cursor.fetchone()[0] == 0:
+        default_motivos = ["Scrap / Refugo", "Ajuste de Projeto (BOM)", "Quebra na Montagem", "Substituição de Material", "Perda de Processo", "Erro de Separação / Estoque"]
+        for m in default_motivos:
+            cursor.execute("INSERT INTO motivos_auditoria (motivo) VALUES (%s) ON CONFLICT (motivo) DO NOTHING", (m,))
+
     # 1. TABELA DE PROJETISTAS
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS projetistas (
@@ -3279,7 +3293,7 @@ elif menu_selecionado == "🔍 Manutenção":
             "Colaboradores", "Férias", "Feriados", 
             "Calendário Lucy", "Configurações (Erros e Paradas)", "Parâmetros de Jornada", 
             "Responsáveis (Projetos)", "Destinações de Sobra", 
-            "Parâmetros de Custo (HH/OH)", "Itens Kanban", "Fáscias (Itens Ignorados)", # <-- AS 3 NOVAS AQUI
+            "Parâmetros de Custo (HH/OH)", "Itens Kanban", "Fáscias (Itens Ignorados)", "Motivos de Auditoria", # <--- AQUI
             "📥 Importação de Excel (Em Lote)"
         ], horizontal=True)
         
@@ -3529,6 +3543,27 @@ elif menu_selecionado == "🔍 Manutenção":
                     del_kbn = st.selectbox("Selecione para excluir:", ["- Selecione -"] + df_kbn['Código'].tolist() if not df_kbn.empty else ["- Vazio -"])
                     if st.button("Confirmar Exclusão") and del_kbn != "- Selecione -":
                         cursor.execute("DELETE FROM itens_kanban WHERE codigo = %s", (del_kbn,))
+                        conn.commit(); st.rerun()
+
+            # --- GESTÃO DE MOTIVOS DE AUDITORIA ---
+            elif cat_manut == "Motivos de Auditoria":
+                st.write("**Cadastro de Causas Raízes para Divergências (3-Way Match)**")
+                with st.form("form_motivos_auditoria", clear_on_submit=True):
+                    add_m = st.text_input("Novo Motivo/Justificativa:")
+                    if st.form_submit_button("➕ Salvar Motivo", type="primary"):
+                        if add_m:
+                            cursor.execute("INSERT INTO motivos_auditoria (motivo) VALUES (%s) ON CONFLICT (motivo) DO NOTHING", (add_m.strip(),))
+                            conn.commit()
+                            st.success("✔️ Motivo cadastrado!")
+                            st.rerun()
+                            
+                df_motivos = pd.read_sql_query("SELECT motivo as \"Motivos Cadastrados\" FROM motivos_auditoria ORDER BY motivo", engine)
+                st.dataframe(df_motivos, width="stretch", hide_index=True)
+                
+                with st.expander("🗑️ Excluir Motivo"):
+                    del_m = st.selectbox("Selecione o motivo para excluir:", ["- Selecione -"] + df_motivos['Motivos Cadastrados'].tolist() if not df_motivos.empty else ["- Vazio -"])
+                    if st.button("Confirmar Exclusão") and del_m != "- Selecione -":
+                        cursor.execute("DELETE FROM motivos_auditoria WHERE motivo = %s", (del_m,))
                         conn.commit(); st.rerun()
 
             # --- 3. GESTÃO DE FÁSCIAS / IGNORADOS ---
@@ -4095,7 +4130,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         if not df_editavel.empty:
             df_edit_display = df_editavel[['Item', 'Descrição', 'Status', 'Impacto Financeiro (R$)', 'Motivo']].sort_values(by='Impacto Financeiro (R$)', ascending=False)
             
-            opcoes_motivo = ["Não Informado", "Scrap / Refugo", "Ajuste de Projeto (BOM)", "Quebra na Montagem", "Substituição de Material", "Perda de Processo", "Erro de Separação / Estoque"]
+            # Busca os motivos atualizados no banco de dados em tempo real
+            df_motivos_db = pd.read_sql_query("SELECT motivo FROM motivos_auditoria ORDER BY motivo", engine)
+            opcoes_motivo = ["Não Informado"] + df_motivos_db['motivo'].tolist() if not df_motivos_db.empty else ["Não Informado", "Scrap / Refugo"]
             
             tabela_editada = st.data_editor(
                 df_edit_display,
