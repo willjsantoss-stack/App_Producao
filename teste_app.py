@@ -4109,7 +4109,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         c1.metric("Custo Total Material", f"R$ {custo_total_mat:,.2f}")
         c2.metric("Proporção Kanban", f"R$ {custo_kbn:,.2f}", f"{pct_kbn:.1f}% do Custo Mat.", delta_color="off")
         c3.metric("Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", f"Economia: R$ {custo_eco:+,.2f}", delta_color="inverse")
-        c4.metric("Diverg. LÍQUIDA Engenharia", f"R$ {custo_eng_liq:+,.2f}", "Balanço: Adições vs Remoções", delta_color="off")
+        c4.metric("Diverg. Líquida BOM", f"R$ {custo_eng_liq:+,.2f}", "Balanço: Adições vs Remoções", delta_color="off")
 
         col_graf1, col_graf2 = st.columns(2)
         with col_graf1:
@@ -4145,7 +4145,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
         mask_exc = df_final['Status'].isin(['Fábrica: Excedente Operacional', 'Alerta: Consumido após Remoção'])
         if mask_exc.any():
-            st.markdown("#### 📉 1. Excedentes e Furos Críticos de Fábrica")
+            st.markdown("#### 📉 1. Consumo Excedente")
             df_exc = df_final[mask_exc][['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
             df_exc['Impacto_Abs'] = df_exc['Impacto Financeiro (R$)'].abs()
             df_exc = df_exc.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
@@ -4154,7 +4154,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
         mask_eco = df_final['Status'] == 'Fábrica: Economia Operacional'
         if mask_eco.any():
-            st.markdown("#### 📈 2. Economias de Fábrica")
+            st.markdown("#### 📈 2. Consumo Abaixo do Previsto")
             df_eco = df_final[mask_eco][['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
             df_eco['Impacto_Abs'] = df_eco['Impacto Financeiro (R$)'].abs()
             df_eco = df_eco.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
@@ -4163,7 +4163,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
         mask_eng = df_final['Status'].str.contains('Engenharia')
         if mask_eng.any():
-            st.markdown("#### 📐 3. Divergências de Engenharia")
+            st.markdown("#### 📐 3. Divergências de BOM")
             df_eng = df_final[mask_eng][['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
             df_eng['Impacto_Abs'] = df_eng['Impacto Financeiro (R$)'].abs()
             df_eng = df_eng.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
@@ -4254,7 +4254,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         ["Custo Consumo Kanban", f"R$ {custo_kbn:,.2f}", f"{pct_kbn:.1f}% do Custo Material"],
                         ["Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", "Excedentes Operacionais e Furos"],
                         ["Economia de Fábrica", f"R$ {custo_eco:+,.2f}", "Consumo abaixo do orçado"],
-                        ["Divergência Líq. Engenharia", f"R$ {custo_eng_liq:+,.2f}", "Balanço (Adições vs Remoções)"]
+                        ["Divergência Líq. BOM", f"R$ {custo_eng_liq:+,.2f}", "Balanço (Adições vs Remoções)"]
                     ]
                     
                     t_kpi = Table(data_kpi, colWidths=[180, 120, 180])
@@ -4263,7 +4263,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     story.append(Spacer(1, 15))
 
                     # --- CORREÇÃO VISUAL PDF: Gráficos EMPILHADOS na Vertical (2x1) ---
-                    story.append(Paragraph("2. Diagnóstico Executivo de Causa Raiz", header_style))
+                    story.append(Paragraph("2. Diagnóstico Executivo", header_style))
                     
                     # Usa uma grade de 2 linhas e 1 coluna, ajustando a proporção para caber perfeitamente na página 1
                     fig_pdf, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 7.5), facecolor='white', gridspec_kw={'height_ratios': [1, 1.2]})
@@ -4341,19 +4341,19 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         story.append(Spacer(1, 15))
 
                     df_exc = df_final[df_final['Status'].isin(['Fábrica: Excedente Operacional', 'Alerta: Consumido após Remoção'])].copy()
-                    add_tabela_pdf_motivo(df_exc, "3.1 Detalhamento: Excedentes e Furos Operacionais")
+                    add_tabela_pdf_motivo(df_exc, "3.1 Detalhamento: Consumo Excedente")
                     
                     df_eco = df_final[df_final['Status'] == 'Fábrica: Economia Operacional'].copy()
-                    add_tabela_pdf_motivo(df_eco, "3.2 Detalhamento: Economias de Fábrica")
+                    add_tabela_pdf_motivo(df_eco, "3.2 Detalhamento: Consumo Abaixo do Previsto")
                     
                     df_eng = df_final[df_final['Status'].str.contains('Engenharia')].copy()
-                    add_tabela_pdf_motivo(df_eng, "3.3 Detalhamento: Divergências de Engenharia")
+                    add_tabela_pdf_motivo(df_eng, "3.3 Detalhamento: Divergências de BOM")
                     
                     df_kbn_pdf = df_final[df_final['Status'] == 'Consumo Kanban'].sort_values(by='Custo Real Total', ascending=False).copy()
                     df_kbn_pdf = df_kbn_pdf[df_kbn_pdf['Quantity'] > 0].head(20)
                     
                     if not df_kbn_pdf.empty:
-                        story.append(Paragraph("3.4 Detalhamento: Itens Kanban (Top 20 Custos)", header_style))
+                        story.append(Paragraph("3.4 Detalhamento: Itens Kanban", header_style))
                         t_data = [["Item", "Descrição", "Qtd Consumida", "Custo Total (R$)"]]
                         for _, r in df_kbn_pdf.iterrows():
                             t_data.append([str(r['Item']), str(r['Descrição'])[:35], f"{r['Quantity']:.2f}", f"R$ {r['Custo Real Total']:,.2f}"])
