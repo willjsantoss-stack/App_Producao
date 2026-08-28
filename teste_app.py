@@ -570,7 +570,8 @@ menu_selecionado = st.radio(
         "📅 Planejamento de Carga",
         "📊 Dash. Projetos", 
         "👥 Dash. RH",
-        "🔍 Manutenção", 
+        "🔍 Manutenção",
+        "📊 Auditoria BOM vs Real", # <--- ADICIONE ESTA LINHA AQUI NA LISTA 
         "📑 Relatórios PDF",
         "📈 Painel Executivo (BI)"
     ],
