@@ -73,7 +73,49 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS banco_horas_log (id SERIAL PRIMARY KEY, matricula TEXT, data TEXT, horas_delta NUMERIC, operacao TEXT, justificativa TEXT)')
     cursor.execute('CREATE TABLE IF NOT EXISTS parametros_jornada (id SERIAL PRIMARY KEY, data_inicio TEXT, data_fim TEXT, carga_seg_qui NUMERIC, carga_sexta NUMERIC, hora_saida_seg_qui TEXT, hora_saida_sexta TEXT)')
     cursor.execute('CREATE TABLE IF NOT EXISTS planejamento (id SERIAL PRIMARY KEY, data_planejada TEXT, matricula TEXT, so TEXT, wo TEXT, unidade TEXT DEFAULT \'Geral\', horas_planejadas NUMERIC)')
+    # 1. Configurações de Custos Globais (HH e OH)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS parametros_custos (
+            parametro TEXT PRIMARY KEY,
+            valor NUMERIC
+        )
+    ''')
+    cursor.execute("INSERT INTO parametros_custos (parametro, valor) VALUES ('taxa_hh', 77.17), ('taxa_oh', 1.7569) ON CONFLICT (parametro) DO NOTHING;")
 
+    # 2. Itens Kanban Fixos
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS itens_kanban (
+            codigo TEXT PRIMARY KEY,
+            descricao TEXT
+        )
+    ''')
+
+    # 3. Matérias-Primas / Fáscias a Ignorar na Auditoria
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS itens_ignorados_auditoria (
+            codigo TEXT PRIMARY KEY,
+            descricao TEXT,
+            motivo TEXT
+        )
+    ''')
+
+    # 4. Histórico de Divergências de 3 Vias (Engenharia vs Fábrica)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS auditoria_3vias_historico (
+            id SERIAL PRIMARY KEY,
+            data_auditoria TIMESTAMP,
+            item TEXT,
+            descricao TEXT,
+            qtd_bom_inicial NUMERIC,
+            qtd_bom_final NUMERIC,
+            qtd_real NUMERIC,
+            desvio_engenharia NUMERIC,
+            desvio_fabrica NUMERIC,
+            valor_impacto NUMERIC,
+            status TEXT
+        )
+    ''')
+    conn.commit()
 
     # 1. TABELA DE PROJETISTAS
     cursor.execute('''
@@ -3235,7 +3277,9 @@ elif menu_selecionado == "🔍 Manutenção":
         cat_manut = st.radio("Selecione a Tabela de Visualização/Edição:", [
             "Colaboradores", "Férias", "Feriados", 
             "Calendário Lucy", "Configurações (Erros e Paradas)", "Parâmetros de Jornada", 
-            "Responsáveis (Projetos)", "Destinações de Sobra", "📥 Importação de Excel (Em Lote)"
+            "Responsáveis (Projetos)", "Destinações de Sobra", 
+            "Parâmetros de Custo (HH/OH)", "Itens Kanban", "Fáscias (Itens Ignorados)", # <-- AS 3 NOVAS AQUI
+            "📥 Importação de Excel (Em Lote)"
         ], horizontal=True)
         
         with st.container(border=True):
@@ -3417,6 +3461,76 @@ elif menu_selecionado == "🔍 Manutenção":
                     conn.commit(); st.rerun()
                 st.dataframe(pd.read_sql_query("SELECT destinacao as \"Destinação\" FROM destinacoes_sobra", engine), width="stretch", hide_index=True)
 
+            # --- 1. GESTÃO DE TAXAS GLOBAIS ---
+            elif cat_manut == "Parâmetros de Custo (HH/OH)":
+                st.write("**Atualização de Taxas Financeiras para Auditoria**")
+                
+                # Lê do banco para preencher o formulário
+                df_params = pd.read_sql_query("SELECT parametro, valor FROM parametros_custos", engine)
+                dict_p = dict(zip(df_params['parametro'], df_params['valor']))
+                
+                with st.form("form_params"):
+                    c1, c2 = st.columns(2)
+                    v_hh = c1.number_input("Taxa HH (Divisor)", value=float(dict_p.get('taxa_hh', 77.17)), step=1.0)
+                    v_oh = c2.number_input("Taxa OH (Multiplicador)", value=float(dict_p.get('taxa_oh', 1.7569)), step=0.1)
+                    
+                    if st.form_submit_button("💾 Salvar Novas Taxas", type="primary"):
+                        cursor.execute("UPDATE parametros_custos SET valor = %s WHERE parametro = 'taxa_hh'", (v_hh,))
+                        cursor.execute("UPDATE parametros_custos SET valor = %s WHERE parametro = 'taxa_oh'", (v_oh,))
+                        conn.commit()
+                        st.success("Taxas atualizadas no banco de dados!")
+                        st.rerun()
+
+            # --- 2. GESTÃO DE ITENS KANBAN ---
+            elif cat_manut == "Itens Kanban":
+                st.write("**Cadastro de Códigos Tratados via Kanban (Serão ignorados como Furo/Falta)**")
+                with st.form("form_kbn", clear_on_submit=True):
+                    c1, c2 = st.columns([1, 2])
+                    cod = c1.text_input("Código do Item*")
+                    desc = c2.text_input("Descrição")
+                    
+                    if st.form_submit_button("➕ Adicionar Item", type="primary"):
+                        if cod:
+                            cursor.execute("INSERT INTO itens_kanban (codigo, descricao) VALUES (%s, %s) ON CONFLICT (codigo) DO NOTHING", (cod.strip(), desc.strip()))
+                            conn.commit()
+                            st.success(f"Item {cod} adicionado!")
+                            st.rerun()
+                            
+                st.write("**Itens Cadastrados:**")
+                df_kbn = pd.read_sql_query("SELECT codigo as \"Código\", descricao as \"Descrição\" FROM itens_kanban ORDER BY codigo", engine)
+                st.dataframe(df_kbn, width="stretch", hide_index=True)
+                
+                with st.expander("🗑️ Excluir Item Kanban"):
+                    del_kbn = st.selectbox("Selecione para excluir:", ["- Selecione -"] + df_kbn['Código'].tolist() if not df_kbn.empty else ["- Vazio -"])
+                    if st.button("Confirmar Exclusão") and del_kbn != "- Selecione -":
+                        cursor.execute("DELETE FROM itens_kanban WHERE codigo = %s", (del_kbn,))
+                        conn.commit(); st.rerun()
+
+            # --- 3. GESTÃO DE FÁSCIAS / IGNORADOS ---
+            elif cat_manut == "Fáscias (Itens Ignorados)":
+                st.write("**Cadastro de Matérias-Primas consumidas em WOs externas (Excluídas totalmente da Auditoria)**")
+                with st.form("form_fasc", clear_on_submit=True):
+                    c1, c2, c3 = st.columns([1, 2, 2])
+                    cod = c1.text_input("Código da Chapa/Item*")
+                    desc = c2.text_input("Descrição")
+                    motivo = c3.text_input("Justificativa", value="Fáscia - Consumo em WO Externa")
+                    
+                    if st.form_submit_button("➕ Adicionar Exceção", type="primary"):
+                        if cod:
+                            cursor.execute("INSERT INTO itens_ignorados_auditoria (codigo, descricao, motivo) VALUES (%s, %s, %s) ON CONFLICT (codigo) DO NOTHING", (cod.strip(), desc.strip(), motivo.strip()))
+                            conn.commit()
+                            st.success("Exceção adicionada com sucesso!")
+                            st.rerun()
+                            
+                st.write("**Exceções Cadastradas:**")
+                df_fasc = pd.read_sql_query("SELECT codigo as \"Código\", descricao as \"Descrição\", motivo as \"Motivo\" FROM itens_ignorados_auditoria ORDER BY codigo", engine)
+                st.dataframe(df_fasc, width="stretch", hide_index=True)
+                
+                with st.expander("🗑️ Remover Exceção"):
+                    del_fasc = st.selectbox("Selecione o código para voltar a auditar:", ["- Selecione -"] + df_fasc['Código'].tolist() if not df_fasc.empty else ["- Vazio -"])
+                    if st.button("Confirmar Exclusão da Exceção") and del_fasc != "- Selecione -":
+                        cursor.execute("DELETE FROM itens_ignorados_auditoria WHERE codigo = %s", (del_fasc,))
+                        conn.commit(); st.rerun()
 # ------------------------------------------
 # ABA: RELATÓRIOS PDF 
 # ------------------------------------------
@@ -3754,4 +3868,171 @@ elif menu_selecionado == "📈 Painel Executivo (BI)":
             st.info("Nenhum apontamento produtivo encontrado para o período selecionado.")
     else:
         st.info("O banco de dados ainda não possui registros de apontamentos.")
+
+# ------------------------------------------
+# ABA: AUDITORIA 3-WAY & RELATÓRIO PDF
+# ------------------------------------------
+elif menu_selecionado == "📊 Auditoria BOM vs Real":
+    st.markdown("## 📊 Auditoria de Custos: 3-Way Match (Engenharia vs Fábrica)")
+    st.write("Compare a **BOM Inicial** (orçamento) com a **BOM Final** (revisão) e o **Consumo Real** para isolar desvios de engenharia e furos de fábrica.")
+
+    # Puxa taxas globais do banco
+    df_params = pd.read_sql_query("SELECT parametro, valor FROM parametros_custos", engine)
+    dict_params = dict(zip(df_params['parametro'], df_params['valor']))
+    t_hh = float(dict_params.get('taxa_hh', 77.17))
+    t_oh = float(dict_params.get('taxa_oh', 1.7569))
+
+    with st.expander("📁 1. Carregamento de Planilhas", expanded=True):
+        c_up1, c_up2, c_up3 = st.columns(3)
+        file_bom_ini = c_up1.file_uploader("BOM Inicial (Opcional)", type=['xlsx', 'csv'])
+        file_bom_fin = c_up2.file_uploader("BOM Final / Atual*", type=['xlsx', 'csv'])
+        file_real = c_up3.file_uploader("Consumo Real*", type=['xlsx', 'csv'])
+
+        if st.button("🚀 Processar Análise de 3 Vias", type="primary", use_container_width=True):
+            if not file_bom_fin or not file_real:
+                st.error("❌ A BOM Final e o Consumo Real são obrigatórios para a análise.")
+            else:
+                try:
+                    # Leitura BOM Final
+                    df_fin = pd.read_csv(file_bom_fin, sep=';', encoding='latin1') if file_bom_fin.name.endswith('.csv') else pd.read_excel(file_bom_fin)
+                    if 'Cost per unit' in df_fin.columns and 'Cost price per unit' not in df_fin.columns:
+                        df_fin.rename(columns={'Cost per unit': 'Cost price per unit'}, inplace=True)
+                    df_fin['Item/Resource'] = df_fin['Item/Resource'].astype(str).str.strip()
+                    
+                    agg_fin = {'Consumption per lot size': 'sum', 'Cost price per unit': 'max', 'Description': 'first'}
+                    if 'Processing method' in df_fin.columns: agg_fin['Processing method'] = 'first'
+                    df_bom_f = df_fin.groupby('Item/Resource').agg(agg_fin).reset_index()
+
+                    # Leitura BOM Inicial (Se houver)
+                    if file_bom_ini:
+                        df_ini = pd.read_csv(file_bom_ini, sep=';', encoding='latin1') if file_bom_ini.name.endswith('.csv') else pd.read_excel(file_bom_ini)
+                        df_ini['Item/Resource'] = df_ini['Item/Resource'].astype(str).str.strip()
+                        df_bom_i = df_ini.groupby('Item/Resource')['Consumption per lot size'].sum().reset_index().rename(columns={'Consumption per lot size': 'qtd_ini'})
+                    else:
+                        df_bom_i = df_bom_f[['Item/Resource']].copy()
+                        df_bom_i['qtd_ini'] = df_bom_f['Consumption per lot size'] # Assume igual se não enviada
+
+                    # Leitura Consumo Real
+                    df_r = pd.read_csv(file_real, sep=';', encoding='latin1') if file_real.name.endswith('.csv') else pd.read_excel(file_real)
+                    df_r['Item number'] = df_r['Item number'].astype(str).str.strip()
+                    if 'Physical cost amount' not in df_r.columns: df_r['Physical cost amount'] = 0.0
+                    df_real_agg = df_r.groupby('Item number').agg({'Quantity': 'sum', 'Financial cost amount': 'sum', 'Physical cost amount': 'sum'}).reset_index()
+
+                    # Carrega Fáscias/Itens a Ignorar do Banco
+                    df_ign = pd.read_sql_query("SELECT codigo FROM itens_ignorados_auditoria", engine)
+                    lista_ign = df_ign['codigo'].astype(str).tolist()
+
+                    # Cruzamento 3-Way Match
+                    df_m1 = pd.merge(df_bom_f, df_bom_i, on='Item/Resource', how='outer').fillna(0)
+                    df_res = pd.merge(df_m1, df_real_agg, left_on='Item/Resource', right_on='Item number', how='outer', suffixes=('_bom', '_real'))
+                    
+                    df_res['Item'] = df_res['Item/Resource'].fillna(df_res['Item number'])
+                    df_res['Descrição'] = df_res['Description'].fillna("Item Extra")
+                    
+                    # Remove Fáscias de Matéria-Prima cadastradas para ignorar
+                    df_res = df_res[~df_res['Item'].astype(str).isin(lista_ign)].copy()
+
+                    # Normalização numérica
+                    for col in ['Consumption per lot size', 'qtd_ini', 'Quantity', 'Financial cost amount', 'Physical cost amount', 'Cost price per unit']:
+                        if col in df_res.columns: df_res[col] = df_res[col].fillna(0).astype(float)
+
+                    df_res['Custo Real Total'] = df_res.apply(lambda r: r['Financial cost amount'] if r['Financial cost amount'] != 0 else r['Physical cost amount'], axis=1)
+                    df_res['Custo Unitário'] = df_res.apply(lambda r: abs(r['Custo Real Total'] / r['Quantity']) if r['Quantity'] != 0 else r['Cost price per unit'], axis=1)
+
+                    # Desvios Matemáticos
+                    df_res['Desvio Engenharia'] = df_res['Consumption per lot size'] - df_res['qtd_ini'] # Mudança na BOM
+                    df_res['Desvio Fábrica'] = df_res['Quantity'].abs() - df_res['Consumption per lot size'] # Consumo vs BOM Final
+                    df_res['Impacto Financeiro (R$)'] = df_res['Desvio Fábrica'].abs() * df_res['Custo Unitário']
+
+                    def classificar_status(r):
+                        if r['qtd_ini'] == 0 and r['Consumption per lot size'] > 0: return "Adicionado pela Engenharia"
+                        if r['Consumption per lot size'] == 0 and r['qtd_ini'] > 0: return "Removido pela Engenharia"
+                        if r['Desvio Fábrica'] > 0.001: return "Excedente de Fábrica (Refugo/Perda)"
+                        if r['Desvio Fábrica'] < -0.001: return "Economia de Fábrica"
+                        return "Conforme"
+
+                    df_res['Status'] = df_res.apply(classificar_status, axis=1)
+                    st.session_state['res_audit_3way'] = df_res
+                    st.success("✔️ Cruzamento de 3 vias concluído com sucesso!")
+                except Exception as e:
+                    st.error(f"Erro ao processar planilhas: {e}")
+
+        if 'res_audit_3way' in st.session_state:
+            df_final = st.session_state['res_audit_3way']
+
+            st.markdown("---")
+            st.markdown("### 💾 Salvar no Banco e Gerar Relatório PDF")
+            
+            col_b1, col_b2 = st.columns(2)
+            
+            if col_b1.button("📥 Gravar Histórico no Banco de Dados", type="primary", use_container_width=True):
+                with st.spinner("Gravando..."):
+                    for _, r in df_final.iterrows():
+                        cursor.execute("""
+                            INSERT INTO auditoria_3vias_historico 
+                            (data_auditoria, item, descricao, qtd_bom_inicial, qtd_bom_final, qtd_real, desvio_engenharia, desvio_fabrica, valor_impacto, status)
+                            VALUES (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (
+                            r['Item'], r['Descrição'], r['qtd_ini'], r['Consumption per lot size'], 
+                            r['Quantity'], r['Desvio Engenharia'], r['Desvio Fábrica'], 
+                            r['Impacto Financeiro (R$)'], r['Status']
+                        ))
+                    conn.commit()
+                    st.success("✔️ Dados gravados com sucesso na tabela de histórico!")
+
+            # --- GERAÇÃO DO RELATÓRIO PDF EXECUTIVO ---
+            if col_b2.button("📄 Gerar Relatório Executivo em PDF", use_container_width=True):
+                try:
+                    from reportlab.lib.pagesizes import A4
+                    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+                    from reportlab.lib.styles import getSampleStyleSheet
+                    from reportlab.lib import colors
+                    from io import BytesIO
+                    
+                    pdf_buffer = BytesIO()
+                    doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+                    story = []
+                    styles = getSampleStyleSheet()
+
+                    # Título do Relatório
+                    story.append(Paragraph("<b>RELATÓRIO EXECUTIVO DE AUDITORIA - 3-WAY MATCH</b>", styles['Heading1']))
+                    story.append(Paragraph(f"<b>Data de Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
+                    story.append(Spacer(1, 15))
+
+                    # Tabela Resumo no PDF
+                    story.append(Paragraph("<b>Divergências de Engenharia e Fábrica</b>", styles['Heading2']))
+                    
+                    df_print = df_final[df_final['Status'] != 'Conforme'].head(25) # Top ocorrências
+                    t_data = [["Item", "Descrição", "BOM Ini", "BOM Fin", "Real", "Status"]]
+                    for _, r in df_print.iterrows():
+                        t_data.append([str(r['Item']), str(r['Descrição'])[:25], f"{r['qtd_ini']:.1f}", f"{r['Consumption per lot size']:.1f}", f"{r['Quantity']:.1f}", str(r['Status'])])
+
+                    t_pdf = Table(t_data, colWidths=[65, 170, 50, 50, 50, 150])
+                    t_pdf.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#004a99")),
+                        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                        ('FONTSIZE', (0,0), (-1,-1), 8),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                    ]))
+                    story.append(t_pdf)
+                    doc.build(story)
+                    pdf_data = pdf_buffer.getvalue()
+
+                    st.download_button(
+                        label="📥 Baixar PDF Executivo para Salvar no Projeto",
+                        data=pdf_data,
+                        file_name=f"Relatorio_Auditoria_3Way_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf",
+                        type="primary"
+                    )
+                    st.success("✔️ Relatório PDF gerado com sucesso! Pronto para download.")
+                except Exception as e:
+                    st.error(f"Erro ao gerar PDF: {e}")
+
+            # Exibição interativa na tela
+            st.markdown("### 📋 Prévia dos Desvios Identificados")
+            st.dataframe(df_final[['Item', 'Descrição', 'qtd_ini', 'Consumption per lot size', 'Quantity', 'Desvio Engenharia', 'Desvio Fábrica', 'Status']].rename(columns={
+                'qtd_ini': 'BOM Inicial', 'Consumption per lot size': 'BOM Final', 'Quantity': 'Consumo Real'
+            }), width="stretch")
 # Teste de conexão com o GitHub
