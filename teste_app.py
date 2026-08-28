@@ -3980,6 +3980,11 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_r.columns = df_r.columns.str.strip()
                         df_r['Item number'] = df_r['Item number'].astype(str).str.strip()
                         
+                        # --- NOVIDADE: FILTRO INTELIGENTE DE DEVOLUÇÕES (RETURN LOT ID) ---
+                        # Se a linha tem lote de devolução, ela é um estorno do ERP e não deve ser somada!
+                        if 'Return lot ID' in df_r.columns:
+                            df_r = df_r[df_r['Return lot ID'].isna() | (df_r['Return lot ID'].astype(str).str.strip() == '') | (df_r['Return lot ID'].astype(str).str.strip().str.lower() == 'nan')]
+                        
                         # CORREÇÃO DO ERP: Transforma baixas de estoque negativas em consumo positivo
                         for col_num in ['Quantity', 'Financial cost amount', 'Physical cost amount']:
                             if col_num in df_r.columns:
