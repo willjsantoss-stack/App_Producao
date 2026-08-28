@@ -3983,32 +3983,27 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         if 'Return lot ID' not in df_r.columns:
                             df_r['Return lot ID'] = None
 
-                        # --- O FILTRO DE OURO (LÓGICA ERP) ---
                         def is_true_consumption(row):
                             qty = pd.to_numeric(row['Quantity'], errors='coerce')
                             if pd.isna(qty): return False
-                            
-                            # 1. Consumo real de componentes ou sub-montagens (Negativo no ERP)
                             if qty < 0: return True
-                                
-                            # 2. Devolução de material para o estoque (Positivo, COM Return Lot ID)
                             if qty > 0 and pd.notna(row['Return lot ID']) and str(row['Return lot ID']).strip() not in ['', 'nan', 'None']:
                                 return True
-                                
-                            # 3. Produção de sub-montagens/produtos acabados (Positivo e SEM Return Lot ID) -> IGNORA
                             return False
 
                         df_r = df_r[df_r.apply(is_true_consumption, axis=1)].copy()
 
-                        # Padroniza: Consumo (+), Devolução (-)
+                        # --- CORREÇÃO KANBAN/ERP: Inversão de Sinal (Sem forçar abs) ---
+                        # Multiplica por -1 para Consumo ser (+) e Devolução ser (-)
                         df_r['Quantity'] = pd.to_numeric(df_r['Quantity'], errors='coerce').fillna(0) * -1
                         
-                        # Custos acompanham em absoluto para não zerar no saldo
                         if 'Physical cost amount' not in df_r.columns: df_r['Physical cost amount'] = 0.0
                         if 'Financial cost amount' not in df_r.columns: df_r['Financial cost amount'] = 0.0
-                        df_r['Financial cost amount'] = pd.to_numeric(df_r['Financial cost amount'], errors='coerce').fillna(0).abs()
-                        df_r['Physical cost amount'] = pd.to_numeric(df_r['Physical cost amount'], errors='coerce').fillna(0).abs()
+                        
+                        df_r['Financial cost amount'] = pd.to_numeric(df_r['Financial cost amount'], errors='coerce').fillna(0) * -1
+                        df_r['Physical cost amount'] = pd.to_numeric(df_r['Physical cost amount'], errors='coerce').fillna(0) * -1
 
+                        # Agrupa. As devoluções vão subtrair automaticamente!
                         df_real_agg = df_r.groupby('Item number').agg({'Quantity': 'sum', 'Financial cost amount': 'sum', 'Physical cost amount': 'sum'}).reset_index()
 
                         # Carrega Listas do Banco
@@ -4047,11 +4042,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         for col in ['Consumption per lot size', 'qtd_ini', 'Quantity', 'Financial cost amount', 'Physical cost amount', 'Cost price per unit']:
                             if col in df_res.columns: df_res[col] = pd.to_numeric(df_res[col], errors='coerce').fillna(0).astype(float)
 
-                        df_res['Custo Real Total'] = df_res.apply(lambda r: r['Financial cost amount'] if r['Financial cost amount'] != 0 else r['Physical cost amount'], axis=1)
+                        # O Custo Real agora é purificado. Usamos abs() apenas no final da conta para garantir a apresentação
+                        df_res['Custo Real Total'] = df_res.apply(lambda r: abs(r['Financial cost amount'] if r['Financial cost amount'] != 0 else r['Physical cost amount']), axis=1)
                         
-                        # --- CALIBRAGEM DO CUSTO UNITÁRIO ---
                         def calcular_custo_unitario(r):
-                            # Se o ERP exportou R$ 0,00 na baixa (ex: lançou no Adjustment), resgata o custo da BOM
                             if r['Quantity'] != 0 and r['Custo Real Total'] != 0:
                                 return abs(r['Custo Real Total'] / r['Quantity'])
                             return r['Cost price per unit']
@@ -4070,17 +4064,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                                 if r['qtd_ini'] > 0 or r['Consumption per lot size'] > 0: 
                                     return "Ignorado (Mão de Obra / Serviço)"
 
-                            # 1. Alerta Crítico
-                            if r['Consumption per lot size'] == 0 and r['Quantity'] > 0: 
-                                return "Alerta: Consumido após Remoção"
+                            if r['Consumption per lot size'] == 0 and r['Quantity'] > 0: return "Alerta: Consumido após Remoção"
+                            if r['Desvio Fábrica'] > 0.001: return "Fábrica: Excedente Operacional"
+                            if r['Desvio Fábrica'] < -0.001: return "Fábrica: Economia Operacional"
                                 
-                            # 2. Desvios de FÁBRICA (Prioridade Absoluta)
-                            if r['Desvio Fábrica'] > 0.001: 
-                                return "Fábrica: Excedente Operacional"
-                            if r['Desvio Fábrica'] < -0.001: 
-                                return "Fábrica: Economia Operacional"
-                                
-                            # 3. Desvios de ENGENHARIA 
                             if r['Desvio Engenharia'] > 0.001:
                                 if r['qtd_ini'] == 0: return "Engenharia: Adicionado no Escopo"
                                 else: return "Engenharia: Aumento de Qtd"
@@ -4122,14 +4109,13 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         st.markdown("### 📈 Painel Analítico de Custos (Prévia)")
         
         mask_mat = (df_final['Item'].str.upper() != 'MANUFACTURING OVERHEAD') & (df_final['Status'] != 'Ignorado (Mão de Obra / Serviço)')
-        custo_total_mat = df_final[mask_mat]['Custo Real Total'].abs().sum()
+        custo_total_mat = df_final[mask_mat]['Custo Real Total'].sum()
         
-        custo_kbn = df_final[df_final['Eh_Kanban'] == True]['Custo Real Total'].abs().sum()
+        custo_kbn = df_final[df_final['Eh_Kanban'] == True]['Custo Real Total'].sum()
         pct_kbn = (custo_kbn / custo_total_mat * 100) if custo_total_mat > 0 else 0
         
         custo_exc = df_final[df_final['Status'].isin(['Fábrica: Excedente Operacional', 'Alerta: Consumido após Remoção'])]['Impacto Financeiro (R$)'].sum()
         custo_eco = df_final[df_final['Status'] == 'Fábrica: Economia Operacional']['Impacto Financeiro (R$)'].sum()
-        
         custo_eng_liq = df_final[df_final['Status'].str.contains('Engenharia')]['Impacto Financeiro (R$)'].sum()
         
         qtd_oh = df_final[df_final['Item'].str.upper() == 'MANUFACTURING OVERHEAD']['Consumption per lot size'].sum()
@@ -4173,38 +4159,62 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
         st.markdown("---")
         st.markdown("### 📋 Classificação de Causa Raiz (Motivo)")
-        st.write("Antes de gerar o relatório, verifique as quantidades. Sinais **Positivos (+)** indicam Adição/Desperdício, Sinais **Negativos (-)** indicam Remoção/Economia.")
+        st.write("Para facilitar a análise, separamos as divergências nas mesmas categorias do PDF Final. Classifique a Causa Raiz antes de salvar.")
         
-        mask_divergencias = df_final['Status'].str.contains('Fábrica:|Engenharia:|Alerta:')
-        df_editavel = df_final[mask_divergencias].copy()
+        df_motivos_db = pd.read_sql_query("SELECT motivo FROM motivos_auditoria ORDER BY motivo", engine)
+        opcoes_motivo = ["Não Informado"] + df_motivos_db['motivo'].tolist() if not df_motivos_db.empty else ["Não Informado", "Scrap / Refugo", "Ajuste de Projeto"]
         
-        if not df_editavel.empty:
-            df_edit_display = df_editavel[['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
-            df_edit_display['Impacto_Abs'] = df_edit_display['Impacto Financeiro (R$)'].abs()
-            df_edit_display = df_edit_display.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
+        col_config = {
+            "Item": st.column_config.TextColumn(disabled=True),
+            "Descrição": st.column_config.TextColumn(disabled=True),
+            "Status": st.column_config.TextColumn("Status/Categoria", disabled=True),
+            "Qtd Divergência": st.column_config.NumberColumn("Saldo Qtd", format="%+.2f", disabled=True),
+            "Impacto Financeiro (R$)": st.column_config.NumberColumn("Diferença (R$)", format="R$ %+.2f", disabled=True), 
+            "Motivo": st.column_config.SelectboxColumn("Causa Raiz (Selecione)", options=opcoes_motivo, required=True)
+        }
+
+        # --- TABELA 1: EXCEDENTE DE FÁBRICA ---
+        st.markdown("#### 📉 1. Tabela: Consumo Excedente e Furos Críticos")
+        mask_exc = df_final['Status'].isin(['Fábrica: Excedente Operacional', 'Alerta: Consumido após Remoção'])
+        if mask_exc.any():
+            df_exc = df_final[mask_exc][['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
+            df_exc['Impacto_Abs'] = df_exc['Impacto Financeiro (R$)'].abs()
+            df_exc = df_exc.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
             
-            df_motivos_db = pd.read_sql_query("SELECT motivo FROM motivos_auditoria ORDER BY motivo", engine)
-            opcoes_motivo = ["Não Informado"] + df_motivos_db['motivo'].tolist() if not df_motivos_db.empty else ["Não Informado", "Scrap / Refugo", "Ajuste de Projeto"]
-            
-            tabela_editada = st.data_editor(
-                df_edit_display,
-                column_config={
-                    "Item": st.column_config.TextColumn(disabled=True),
-                    "Descrição": st.column_config.TextColumn(disabled=True),
-                    "Status": st.column_config.TextColumn(disabled=True),
-                    "Qtd Divergência": st.column_config.NumberColumn("Saldo Qtd", format="%+.2f", disabled=True),
-                    "Impacto Financeiro (R$)": st.column_config.NumberColumn("Valor Diferença (R$)", format="R$ %+.2f", disabled=True), 
-                    "Motivo": st.column_config.SelectboxColumn("Causa Raiz (Selecione)", options=opcoes_motivo, required=True)
-                },
-                use_container_width=True,
-                hide_index=True,
-                key="tabela_causa_raiz"
-            )
-            
-            dict_motivos = dict(zip(tabela_editada['Item'], tabela_editada['Motivo']))
-            df_final['Motivo'] = df_final['Item'].map(dict_motivos).fillna(df_final['Motivo'])
+            tab_exc = st.data_editor(df_exc, column_config=col_config, use_container_width=True, hide_index=True, key="tab_exc")
+            dict_exc = dict(zip(tab_exc['Item'], tab_exc['Motivo']))
+            df_final['Motivo'] = df_final.apply(lambda r: dict_exc.get(r['Item'], r['Motivo']), axis=1)
         else:
-            st.info("Todos os itens estão Conformes ou são Kanban. Nenhuma classificação necessária.")
+            st.success("✔️ Sem desperdícios ou furos operacionais detectados.")
+
+        # --- TABELA 2: ECONOMIA DE FÁBRICA ---
+        st.markdown("#### 📈 2. Tabela: Consumo Abaixo do Previsto (Economia Operacional)")
+        mask_eco = df_final['Status'] == 'Fábrica: Economia Operacional'
+        if mask_eco.any():
+            df_eco = df_final[mask_eco][['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
+            df_eco['Impacto_Abs'] = df_eco['Impacto Financeiro (R$)'].abs()
+            df_eco = df_eco.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
+            
+            tab_eco = st.data_editor(df_eco, column_config=col_config, use_container_width=True, hide_index=True, key="tab_eco")
+            dict_eco = dict(zip(tab_eco['Item'], tab_eco['Motivo']))
+            df_final['Motivo'] = df_final.apply(lambda r: dict_eco.get(r['Item'], r['Motivo']), axis=1)
+        else:
+            st.info("Nenhuma economia registrada em relação à BOM Final.")
+
+        # --- TABELA 3: ENGENHARIA ---
+        st.markdown("#### 📐 3. Tabela: Divergências de Engenharia (Adições e Remoções)")
+        mask_eng = df_final['Status'].str.contains('Engenharia')
+        if mask_eng.any():
+            df_eng = df_final[mask_eng][['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
+            df_eng['Impacto_Abs'] = df_eng['Impacto Financeiro (R$)'].abs()
+            df_eng = df_eng.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
+            
+            tab_eng = st.data_editor(df_eng, column_config=col_config, use_container_width=True, hide_index=True, key="tab_eng")
+            dict_eng = dict(zip(tab_eng['Item'], tab_eng['Motivo']))
+            df_final['Motivo'] = df_final.apply(lambda r: dict_eng.get(r['Item'], r['Motivo']), axis=1)
+        else:
+            st.info("Nenhuma divergência registrada em relação à BOM Inicial.")
+
 
         st.markdown("---")
         st.markdown("### 💾 Salvar e Exportar Auditoria")
@@ -4334,7 +4344,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     df_eng = df_final[df_final['Status'].str.contains('Engenharia')].copy()
                     add_tabela_pdf_motivo(df_eng, "Divergências de Engenharia (Adições e Remoções)")
                     
-                    df_kbn_pdf = df_final[df_final['Status'] == 'Consumo Kanban'].sort_values(by='Custo Real Total', ascending=False).head(20)
+                    df_kbn_pdf = df_final[df_final['Status'] == 'Consumo Kanban'].sort_values(by='Custo Real Total', ascending=False).copy()
+                    df_kbn_pdf = df_kbn_pdf[df_kbn_pdf['Quantity'] > 0].head(20) # FILTRO KANBAN: Remove os zerados
+                    
                     if not df_kbn_pdf.empty:
                         story.append(Paragraph(f"<b>Tabela: Itens Kanban (Top 20 Custos)</b>", styles['Heading3']))
                         t_data = [["Item", "Descrição", "Qtd Consumida", "Custo Total (R$)"]]
