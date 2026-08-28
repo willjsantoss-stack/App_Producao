@@ -3926,6 +3926,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_fin['Item/Resource'] = df_fin['Item/Resource'].astype(str).str.strip()
                         
                         agg_fin = {'Consumption per lot size': 'sum', 'Cost price per unit': 'max', 'Description': 'first'}
+                        if 'Processing method' in df_fin.columns: agg_fin['Processing method'] = 'first'
                         df_bom_f = df_fin.groupby('Item/Resource').agg(agg_fin).reset_index()
 
                         # Leitura BOM Inicial (Se houver)
@@ -3954,8 +3955,23 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res['Item'] = df_res['Item/Resource'].fillna(df_res['Item number']).astype(str).str.strip()
                         df_res['Descrição'] = df_res['Description'].fillna("Item Extra/Fábrica")
                         
+                        # --- TRATAMENTO DO PROCESSING METHOD ---
+                        if 'Processing method' in df_res.columns:
+                            df_res['Método'] = df_res['Processing method'].fillna("N/A").astype(str).str.upper().str.strip()
+                            df_res['Método'] = df_res['Método'].replace('', 'N/A')
+                        else:
+                            df_res['Método'] = "N/A"
+                        
                         # 1. Filtro: Remove Fáscias de Matéria-Prima
                         df_res = df_res[~df_res['Item'].isin(lista_ign)].copy()
+
+                        # 2. Filtro: Remove itens sem Processing method NA BOM e métodos ignorados definitivos (Phantom)
+                        is_in_bom = (df_res['qtd_ini'] > 0) | (df_res['Consumption per lot size'] > 0)
+                        is_blank_method = df_res['Método'].isin(['N/A', 'NAN', 'NONE', 'NAT'])
+                        mask_remover_metodos = df_res['Método'].isin(['PHANTOM', 'ASM-PH-WO', 'BUY-SC'])
+                        
+                        df_res = df_res[~((is_in_bom & is_blank_method) | mask_remover_metodos)].copy()
+                        # ----------------------------------------
 
                         # Normalização numérica
                         for col in ['Consumption per lot size', 'qtd_ini', 'Quantity', 'Financial cost amount', 'Physical cost amount', 'Cost price per unit']:
@@ -3969,7 +3985,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res['Desvio Fábrica'] = df_res['Quantity'].abs() - df_res['Consumption per lot size']
                         df_res['Impacto Financeiro (R$)'] = df_res['Desvio Fábrica'].abs() * df_res['Custo Unitário']
                         
-                        # 2. Identificação de Kanban
+                        # 3. Identificação de Kanban
                         df_res['Eh_Kanban'] = df_res['Item'].isin(lista_kbn)
 
                         def classificar_status(r):
@@ -3992,6 +4008,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
     if 'res_audit_3way' in st.session_state:
         df_final = st.session_state['res_audit_3way']
         
+        # Trava de Segurança para evitar KeyError de Cache antigo
+        if 'Eh_Kanban' not in df_final.columns: df_final['Eh_Kanban'] = False
+            
         st.markdown("---")
         st.markdown("### 📈 Painel Analítico de Custos (Prévia)")
         
@@ -4076,7 +4095,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
                     # Cabeçalho
                     story.append(Paragraph("VALIDAÇÃO DE CONSUMO - 3 WAY MATCH", title_style))
-                    story.append(Paragraph(f"<b>Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')} | <b>BOM Base:</b> {st.session_state['nome_bom_base']}", styles['Normal']))
+                    story.append(Paragraph(f"<b>Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')} | <b>BOM Base:</b> {st.session_state.get('nome_bom_base', 'Desconhecido')}", styles['Normal']))
                     story.append(Spacer(1, 15))
 
                     # 1. Resumo Executivo (Tabela KPI)
@@ -4189,4 +4208,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     st.error(f"❌ Erro de biblioteca não instalada. Verifique o requirements.txt. Detalhe: {e}")
                 except Exception as e:
                     st.error(f"❌ Erro na geração do PDF: {e}")
+
+            # Exibição interativa na tela
+            st.markdown("### 📋 Prévia dos Desvios Identificados")
+            st.dataframe(df_final[['Item', 'Descrição', 'qtd_ini', 'Consumption per lot size', 'Quantity', 'Desvio Engenharia', 'Desvio Fábrica', 'Status']].rename(columns={
+                'qtd_ini': 'BOM Inicial', 'Consumption per lot size': 'BOM Final', 'Quantity': 'Consumo Real'
+            }), width="stretch")
 # Teste de conexão com o GitHub
