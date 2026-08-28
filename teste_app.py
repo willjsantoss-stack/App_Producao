@@ -4210,12 +4210,23 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         c3.metric("Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", f"Economia: R$ {custo_eco:+,.2f}", delta_color="inverse")
         c4.metric("Diverg. LÍQUIDA BOM", f"R$ {custo_eng_liq:+,.2f}", "Balanço: Adições vs Remoções", delta_color="off")
 
-        # --- ALERTA DE CUSTO ZERO EM TELA ---
         itens_sem_custo = df_final[(df_final['Quantity'] > 0) & (df_final['Custo Unitário'] == 0) & (~df_final['Eh_Kanban'])]
         qtd_sem_custo = len(itens_sem_custo)
         
         if qtd_sem_custo > 0:
             st.warning(f"⚠️ **Alerta de Precificação:** Detectamos {qtd_sem_custo} item(ns) consumido(s) pela fábrica, mas que estão com Custo Unitário R$ 0,00 no sistema (ERP/BOM).")
+
+        # --- MAPA DE CORES UNIVERSAL (TELA E PDF) ---
+        mapa_cores = {
+            "Conforme": "#2ca02c",                      # Verde Forte
+            "Consumo Kanban": "#1f77b4",                # Azul Clássico
+            "Consumo Abaixo da Qtd BOM": "#98df8a",     # Verde Claro (Economia)
+            "BOM: Adicionado no Escopo": "#d62728",     # Vermelho (Aumento de Custo)
+            "BOM: Aumento de Qtd": "#ff9896",           # Vermelho Claro
+            "Consumo Excedente": "#ff7f0e",             # Laranja (Alerta)
+            "BOM: Redução de Qtd": "#9467bd",           # Roxo
+            "Alerta: Consumido após Remoção": "#7f7f7f" # Cinza
+        }
 
         col_graf1, col_graf2 = st.columns(2)
         with col_graf1:
@@ -4226,8 +4237,16 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                 df_pie['Porcentagem'] = (df_pie['Item'] / total_itens * 100).round(1)
                 df_pie['Rotulo_Personalizado'] = df_pie['Status'] + " (" + df_pie['Porcentagem'].astype(str) + "%)"
                 
-                fig_pie = px.pie(df_pie, names='Rotulo_Personalizado', values='Item', hole=0.55, title="Conformidade Geral de Itens")
-                fig_pie.update_traces(textinfo='none', hoverinfo='label+percent')
+                # Aplica o mapa de cores na tela
+                fig_pie = px.pie(df_pie, names='Status', values='Item', hole=0.55, title="Conformidade Geral de Itens", color='Status', color_discrete_map=mapa_cores, custom_data=['Rotulo_Personalizado'])
+                
+                fig_pie.update_traces(textinfo='none', hovertemplate="%{customdata[0]}<extra></extra>")
+                
+                # Ajusta a legenda para mostrar os Rótulos Personalizados (com a % do lado)
+                for i, trace in enumerate(fig_pie.data[0].labels):
+                    rotulo_correto = df_pie[df_pie['Status'] == trace]['Rotulo_Personalizado'].values[0]
+                    fig_pie.data[0].labels[i] = rotulo_correto
+                
                 fig_pie.update_layout(showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.0, title=""), margin=dict(t=40, b=20, l=0, r=0))
                 st.plotly_chart(fig_pie, use_container_width=True)
 
@@ -4353,7 +4372,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
                     story.append(Paragraph("1. Sumário Financeiro da Ordem", header_style))
                     
-                    # --- REINCLUINDO A LINHA DO ALERTA DE PRECIFICAÇÃO NO PDF ---
                     qtd_sem_custo_pdf = len(df_final[(df_final['Quantity'] > 0) & (df_final['Custo Unitário'] == 0) & (~df_final['Eh_Kanban'])])
                     
                     data_kpi = [
@@ -4382,7 +4400,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         pcts = 100. * dados_r.values / dados_r.values.sum()
                         labels_leg = [f"{idx} ({p:.1f}%)" for idx, p in zip(dados_r.index, pcts)]
                         
-                        wedges, texts = ax1.pie(dados_r.values, startangle=140, colors=plt.cm.Paired.colors)
+                        # Aplica o mapa de cores no PDF usando as chaves agrupadas
+                        cores_pie_pdf = [mapa_cores.get(cat, '#cccccc') for cat in dados_r.index]
+                        
+                        wedges, texts = ax1.pie(dados_r.values, startangle=140, colors=cores_pie_pdf)
                         ax1.legend(wedges, labels_leg, title="Status", loc="center left", bbox_to_anchor=(0.9, 0.5), fontsize=8)
                         centre_circle = plt.Circle((0,0), 0.55, fc='white')
                         ax1.add_artist(centre_circle)
@@ -4394,7 +4415,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_agrup_pdf = df_agrup_pdf.sort_values(by='Impacto Financeiro (R$)', ascending=True)
                         
                         y_pos = np.arange(len(df_agrup_pdf))
-                        cores_barras = ['#dc3545' if val > 0 else '#28a745' for val in df_agrup_pdf['Impacto Financeiro (R$)']]
+                        cores_barras = ['#d62728' if val > 0 else '#2ca02c' for val in df_agrup_pdf['Impacto Financeiro (R$)']]
                         
                         ax2.barh(y_pos, df_agrup_pdf['Impacto Financeiro (R$)'], color=cores_barras, height=0.6)
                         ax2.set_yticks(y_pos)
