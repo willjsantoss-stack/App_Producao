@@ -4111,19 +4111,21 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         c3.metric("Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", f"Economia: R$ {custo_eco:+,.2f}", delta_color="inverse")
         c4.metric("Diverg. LÍQUIDA Engenharia", f"R$ {custo_eng_liq:+,.2f}", "Balanço: Adições vs Remoções", delta_color="off")
 
-        # Exibe apenas o gráfico de Conformidade aqui em cima
-        df_graficos = df_final[df_final['Status'] != 'Ignorado (Mão de Obra / Serviço)'].copy()
-        
-        df_pie = df_graficos.groupby('Status')['Item'].count().reset_index()
-        if not df_pie.empty:
-            total_itens = df_pie['Item'].sum()
-            df_pie['Porcentagem'] = (df_pie['Item'] / total_itens * 100).round(1)
-            df_pie['Rotulo_Personalizado'] = df_pie['Status'] + " (" + df_pie['Porcentagem'].astype(str) + "%)"
-            
-            fig_pie = px.pie(df_pie, names='Rotulo_Personalizado', values='Item', hole=0.45, title="Conformidade Geral de Itens")
-            fig_pie.update_traces(textposition='inside', textinfo='percent')
-            fig_pie.update_layout(showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.0, title=""), margin=dict(t=40, b=20, l=0, r=0))
-            st.plotly_chart(fig_pie, use_container_width=True)
+        # --- CORREÇÃO VISUAL APP: Gráfico de Rosca Limpo e Controlado ---
+        col_graf1, col_graf2 = st.columns(2)
+        with col_graf1:
+            df_graficos = df_final[df_final['Status'] != 'Ignorado (Mão de Obra / Serviço)'].copy()
+            df_pie = df_graficos.groupby('Status')['Item'].count().reset_index()
+            if not df_pie.empty:
+                total_itens = df_pie['Item'].sum()
+                df_pie['Porcentagem'] = (df_pie['Item'] / total_itens * 100).round(1)
+                df_pie['Rotulo_Personalizado'] = df_pie['Status'] + " (" + df_pie['Porcentagem'].astype(str) + "%)"
+                
+                fig_pie = px.pie(df_pie, names='Rotulo_Personalizado', values='Item', hole=0.55, title="Conformidade Geral de Itens")
+                # textinfo='none' esconde a maçaroca de números, transferindo a leitura para a legenda
+                fig_pie.update_traces(textinfo='none', hoverinfo='label+percent')
+                fig_pie.update_layout(showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.0, title=""), margin=dict(t=40, b=20, l=0, r=0))
+                st.plotly_chart(fig_pie, use_container_width=True)
 
         st.markdown("---")
         st.markdown("### 📋 Classificação Analítica")
@@ -4143,7 +4145,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
         dict_exc, dict_eco, dict_eng = {}, {}, {}
 
-        # 1. Tabela: Excedente
         mask_exc = df_final['Status'].isin(['Fábrica: Excedente Operacional', 'Alerta: Consumido após Remoção'])
         if mask_exc.any():
             st.markdown("#### 📉 1. Excedentes e Furos Críticos de Fábrica")
@@ -4153,7 +4154,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
             tab_exc = st.data_editor(df_exc, column_config=col_config, use_container_width=True, hide_index=True, key="tab_exc")
             dict_exc = dict(zip(tab_exc['Item'], tab_exc['Motivo']))
 
-        # 2. Tabela: Economia
         mask_eco = df_final['Status'] == 'Fábrica: Economia Operacional'
         if mask_eco.any():
             st.markdown("#### 📈 2. Economias de Fábrica")
@@ -4163,7 +4163,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
             tab_eco = st.data_editor(df_eco, column_config=col_config, use_container_width=True, hide_index=True, key="tab_eco")
             dict_eco = dict(zip(tab_eco['Item'], tab_eco['Motivo']))
 
-        # 3. Tabela: Engenharia
         mask_eng = df_final['Status'].str.contains('Engenharia')
         if mask_eng.any():
             st.markdown("#### 📐 3. Divergências de Engenharia")
@@ -4173,22 +4172,17 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
             tab_eng = st.data_editor(df_eng, column_config=col_config, use_container_width=True, hide_index=True, key="tab_eng")
             dict_eng = dict(zip(tab_eng['Item'], tab_eng['Motivo']))
 
-        # Sincroniza todas as edições de volta para o DataFrame Principal
         dict_all = {**dict_exc, **dict_eco, **dict_eng}
         df_final['Motivo'] = df_final.apply(lambda r: dict_all.get(r['Item'], r['Motivo']), axis=1)
 
-        # --- NOVO GRÁFICO DINÂMICO DE CAUSA RAIZ ---
         st.markdown("---")
         st.markdown("### 📊 Visão Gerencial: Impacto Financeiro por Causa Raiz")
         
-        # Filtra itens que tiveram divergência E que foram classificados
         mask_motivo_grafico = (df_final['Status'].str.contains('Fábrica:|Engenharia:|Alerta:')) & (df_final['Motivo'] != 'Não Informado')
         df_graf_motivos = df_final[mask_motivo_grafico].copy()
         
         if not df_graf_motivos.empty:
-            # Agrupa os valores financeiros pelo Motivo escolhido
             df_agrupado_motivos = df_graf_motivos.groupby('Motivo')['Impacto Financeiro (R$)'].sum().reset_index()
-            # Ordena do maior custo (prejuízo) para o maior ganho (economia)
             df_agrupado_motivos = df_agrupado_motivos.sort_values(by='Impacto Financeiro (R$)', ascending=True)
             
             fig_mot = px.bar(df_agrupado_motivos, x='Impacto Financeiro (R$)', y='Motivo', orientation='h', 
@@ -4243,8 +4237,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     story = []
                     styles = getSampleStyleSheet()
                     
-                    # --- ESTILOS CORPORATIVOS ---
-                    cor_primaria = colors.HexColor("#003366") # Azul Escuro Corporativo
+                    cor_primaria = colors.HexColor("#003366") 
                     cor_fundo_tabela = colors.HexColor("#F8F9FA")
                     
                     title_style = ParagraphStyle(name='TitleCorp', parent=styles['Heading1'], alignment=1, spaceAfter=20, textColor=cor_primaria, fontName="Helvetica-Bold", fontSize=16)
@@ -4254,13 +4247,12 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     story.append(Paragraph("RELATÓRIO EXECUTIVO DE AUDITORIA FINANCEIRA", title_style))
                     story.append(Paragraph(f"<b>Data da Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')} | <b>BOM de Referência:</b> {st.session_state.get('nome_bom_base', 'Desconhecido')}", subtitle_style))
 
-                    # --- 1. KPIs ---
                     story.append(Paragraph("1. Sumário Financeiro da Ordem", header_style))
                     data_kpi = [
                         ["Indicador Analisado", "Valor (R$ / H)", "Detalhes / Composição"],
                         ["Manufacturing Overhead", f"R$ {valor_oh:,.2f}", f"Fator OH: {t_oh}"],
                         ["Horas Totais Planejadas", f"{horas_totais:,.2f} h", f"Fator HH: {t_hh}"],
-                        ["Custo Total Material Aplicado", f"R$ {custo_total_mat:,.2f}", "Material Aplicado Geral"],
+                        ["Custo Total Material", f"R$ {custo_total_mat:,.2f}", "Material Aplicado Geral"],
                         ["Custo Consumo Kanban", f"R$ {custo_kbn:,.2f}", f"{pct_kbn:.1f}% do Custo Material"],
                         ["Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", "Excedentes Operacionais e Furos"],
                         ["Economia de Fábrica", f"R$ {custo_eco:+,.2f}", "Consumo abaixo do orçado"],
@@ -4268,51 +4260,54 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     ]
                     
                     t_kpi = Table(data_kpi, colWidths=[180, 120, 180])
-                    t_kpi.setStyle(TableStyle([
-                        ('BACKGROUND', (0,0), (-1,0), cor_primaria),
-                        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0,0), (-1,-1), 9),
-                        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, cor_fundo_tabela]),
-                        ('GRID', (0,0), (-1,-1), 0.5, colors.lightgrey)
-                    ]))
+                    t_kpi.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), cor_primaria), ('TEXTCOLOR', (0,0), (-1,0), colors.white), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 9), ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, cor_fundo_tabela]), ('GRID', (0,0), (-1,-1), 0.5, colors.lightgrey)]))
                     story.append(t_kpi)
                     story.append(Spacer(1, 20))
 
-                    # --- 2. GRÁFICOS DE ALTA RESOLUÇÃO (MATPLOTLIB) ---
+                    # --- CORREÇÃO VISUAL PDF: Gráficos Blindados Contra Sobreposição ---
                     story.append(Paragraph("2. Diagnóstico Executivo de Causa Raiz", header_style))
                     
-                    fig_pdf, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5), facecolor='white') # Aumentei o tamanho e a resolução
+                    fig_pdf, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5), facecolor='white')
                     
-                    # Gráfico 1: Conformidade
+                    # Gráfico 1: Rosca Limpa (Sem textos internos)
                     dados_r = df_graficos.groupby('Status')['Item'].count()
                     if not dados_r.empty:
-                        wedges, texts, autotexts = ax1.pie(dados_r.values, autopct='%1.1f%%', startangle=140, pctdistance=0.85, colors=plt.cm.Paired.colors)
-                        ax1.legend(wedges, dados_r.index, title="Status", loc="center left", bbox_to_anchor=(1, 0, 0.5, 1), fontsize=8)
-                        centre_circle = plt.Circle((0,0),0.55,fc='white')
-                        ax1.add_artist(centre_circle)
-                        ax1.set_title("Conformidade (Por Qtd. de Itens)", fontsize=11, fontweight='bold', color='#003366')
+                        pcts = 100. * dados_r.values / dados_r.values.sum()
+                        labels_leg = [f"{idx} ({p:.1f}%)" for idx, p in zip(dados_r.index, pcts)]
                         
-                    # Gráfico 2: Causa Raiz
+                        wedges, texts = ax1.pie(dados_r.values, startangle=140, colors=plt.cm.Paired.colors)
+                        ax1.legend(wedges, labels_leg, title="Status", loc="center left", bbox_to_anchor=(0.9, 0, 0.5, 1), fontsize=8)
+                        centre_circle = plt.Circle((0,0), 0.55, fc='white')
+                        ax1.add_artist(centre_circle)
+                        ax1.set_title("Conformidade (Por Qtd. de Itens)", fontsize=11, fontweight='bold', color='#003366', pad=15)
+                        
+                    # Gráfico 2: Causa Raiz (Afastamento Simétrico)
                     df_mot_pdf = df_final[(df_final['Status'].str.contains('Fábrica:|Engenharia:|Alerta:')) & (df_final['Motivo'] != 'Não Informado')].copy()
                     if not df_mot_pdf.empty:
                         df_agrup_pdf = df_mot_pdf.groupby('Motivo')['Impacto Financeiro (R$)'].sum().reset_index()
                         df_agrup_pdf = df_agrup_pdf.sort_values(by='Impacto Financeiro (R$)', ascending=True)
                         
                         y_pos = np.arange(len(df_agrup_pdf))
-                        # Cores dinâmicas: Vermelho se for prejuízo, Verde se for economia
                         cores_barras = ['#dc3545' if val > 0 else '#28a745' for val in df_agrup_pdf['Impacto Financeiro (R$)']]
                         
-                        ax2.barh(y_pos, df_agrup_pdf['Impacto Financeiro (R$)'], color=cores_barras)
-                        ax2.set_yticks(y_pos, labels=df_agrup_pdf['Motivo'].astype(str).tolist(), fontsize=8)
-                        ax2.set_title("Impacto Financeiro por Causa Raiz", fontsize=11, fontweight='bold', color='#003366')
+                        ax2.barh(y_pos, df_agrup_pdf['Impacto Financeiro (R$)'], color=cores_barras, height=0.6)
+                        ax2.set_yticks(y_pos)
+                        ax2.set_yticklabels(df_agrup_pdf['Motivo'].astype(str).tolist(), fontsize=8)
+                        ax2.set_title("Impacto Financeiro por Causa Raiz", fontsize=11, fontweight='bold', color='#003366', pad=15)
+                        
+                        # O TRUQUE DE MESTRE: Simetria no eixo X afasta as palavras das barras negativas
+                        max_abs = df_agrup_pdf['Impacto Financeiro (R$)'].abs().max()
+                        if max_abs == 0: max_abs = 100
+                        ax2.set_xlim(-max_abs * 1.5, max_abs * 1.5)
+                        ax2.axvline(0, color='black', linewidth=0.8, linestyle='--')
+                        
                         ax2.spines['top'].set_visible(False)
                         ax2.spines['right'].set_visible(False)
+                        ax2.spines['left'].set_visible(False)
                         
                         for i, v in enumerate(df_agrup_pdf['Impacto Financeiro (R$)']):
-                            offset = 5 if v > 0 else -5
-                            align = 'left' if v > 0 else 'right'
+                            offset = max_abs * 0.05 if v >= 0 else -max_abs * 0.05
+                            align = 'left' if v >= 0 else 'right'
                             ax2.text(v + offset, i, f"R$ {v:+,.0f}", color='black', va='center', ha=align, fontsize=8, fontweight='bold')
                     else:
                         ax2.text(0.5, 0.5, "Classifique os motivos na tela\npara gerar este gráfico.", ha='center', va='center', fontsize=10, color='grey')
@@ -4320,14 +4315,13 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
                     fig_pdf.tight_layout()
                     buf_p = BytesIO()
-                    fig_pdf.savefig(buf_p, format='png', dpi=300, bbox_inches='tight') # DPI 300 para PDF ultra nítido
+                    fig_pdf.savefig(buf_p, format='png', dpi=300, bbox_inches='tight')
                     buf_p.seek(0)
                     plt.close(fig_pdf)
                     
-                    story.append(RLImage(buf_p, width=500, height=225))
+                    story.append(RLImage(buf_p, width=520, height=195))
                     story.append(PageBreak())
                     
-                    # --- 3. TABELAS ZEBRADAS PROFISSIONAIS ---
                     def add_tabela_pdf_motivo(df_sub, titulo):
                         if df_sub.empty: return
                         story.append(Paragraph(titulo, header_style))
@@ -4342,19 +4336,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         t_data.append(['', 'TOTAL GERAL DA CATEGORIA', '', f"R$ {tot_val:+,.2f}", ''])
                         
                         t = Table(t_data, colWidths=[65, 175, 60, 75, 105])
-                        t.setStyle(TableStyle([
-                            ('BACKGROUND', (0,0), (-1,0), cor_primaria),
-                            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                            ('ALIGN', (1,1), (1,-1), 'LEFT'), # Alinha a descrição à esquerda
-                            ('FONTSIZE', (0,0), (-1,-1), 8),
-                            ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, cor_fundo_tabela]), # Efeito Zebra
-                            ('GRID', (0,0), (-1,-2), 0.5, colors.lightgrey),
-                            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-                            ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#E9ECEF")), # Fundo cinza para o rodapé de Total
-                            ('LINEABOVE', (0,-1), (-1,-1), 1, cor_primaria)
-                        ]))
+                        t.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), cor_primaria), ('TEXTCOLOR', (0,0), (-1,0), colors.white), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('ALIGN', (1,1), (1,-1), 'LEFT'), ('FONTSIZE', (0,0), (-1,-1), 8), ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, cor_fundo_tabela]), ('GRID', (0,0), (-1,-2), 0.5, colors.lightgrey), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'), ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#E9ECEF")), ('LINEABOVE', (0,-1), (-1,-1), 1, cor_primaria)]))
                         story.append(t)
                         story.append(Spacer(1, 15))
 
