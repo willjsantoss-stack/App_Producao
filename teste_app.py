@@ -4161,8 +4161,11 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res['Status'] = df_res.apply(classificar_status, axis=1)
                         
                         def calcular_qtd_divergencia(r):
-                            if 'BOM' in r['Status']: return r['Desvio Engenharia']
-                            if 'Consumo Excedente' in r['Status'] or 'Consumo Abaixo' in r['Status'] or 'Alerta' in r['Status']: return r['Desvio Fábrica']
+                            # A busca agora é exata pelo prefixo 'BOM:' para não confundir com a palavra solta
+                            if str(r['Status']).startswith('BOM:'): 
+                                return r['Desvio Engenharia']
+                            if 'Consumo Excedente' in r['Status'] or 'Consumo Abaixo' in r['Status'] or 'Alerta' in r['Status']: 
+                                return r['Desvio Fábrica']
                             return 0.0
 
                         df_res['Qtd Divergência'] = df_res.apply(calcular_qtd_divergencia, axis=1)
@@ -4195,7 +4198,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         
         custo_exc = df_final[df_final['Status'].isin(['Consumo Excedente', 'Alerta: Consumido após Remoção'])]['Impacto Financeiro (R$)'].sum()
         custo_eco = df_final[df_final['Status'] == 'Consumo Abaixo da Qtd BOM']['Impacto Financeiro (R$)'].sum()
-        custo_eng_liq = df_final[df_final['Status'].str.contains('BOM')]['Impacto Financeiro (R$)'].sum()
+        custo_eng_liq = df_final[df_final['Status'].str.contains('BOM:')]['Impacto Financeiro (R$)'].sum()
         
         qtd_oh = df_final[df_final['Item'].str.upper() == 'MANUFACTURING OVERHEAD']['Consumption per lot size'].sum()
         valor_oh = qtd_oh * t_oh
@@ -4264,7 +4267,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
             tab_eco = st.data_editor(df_eco, column_config=col_config, use_container_width=True, hide_index=True, key="tab_eco")
             dict_eco = dict(zip(tab_eco['Item'], tab_eco['Motivo']))
 
-        mask_eng = df_final['Status'].str.contains('BOM')
+        mask_eng = df_final['Status'].str.contains('BOM:')
         if mask_eng.any():
             st.markdown("#### 📐 3. Divergências de Estrutura (BOM)")
             df_eng = df_final[mask_eng][['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
@@ -4448,8 +4451,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     df_eco = df_final[df_final['Status'] == 'Consumo Abaixo da Qtd BOM'].copy()
                     add_tabela_pdf_motivo(df_eco, "3.2 Detalhamento: Consumo Abaixo do Previsto na BOM")
                     
-                    df_eng = df_final[df_final['Status'].str.contains('BOM')].copy()
-                    add_tabela_pdf_motivo(df_eng, "3.3 Detalhamento: Divergências de BOM (Estrutura)")
+                    df_eng = df_final[df_final['Status'].str.contains('BOM:')].copy()
+                    add_tabela_pdf_motivo(df_eng, "3.3 Detalhamento: Divergências de Estrutura (BOM)")
                     
                     df_kbn_pdf = df_final[df_final['Status'] == 'Consumo Kanban'].sort_values(by='Custo Real Total', ascending=False).copy()
                     df_kbn_pdf = df_kbn_pdf[df_kbn_pdf['Quantity'] > 0].head(20)
