@@ -4111,7 +4111,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         c3.metric("Desperdício de Fábrica", f"R$ {custo_exc:,.2f}", f"Economia: R$ {custo_eco:+,.2f}", delta_color="inverse")
         c4.metric("Diverg. LÍQUIDA Engenharia", f"R$ {custo_eng_liq:+,.2f}", "Balanço: Adições vs Remoções", delta_color="off")
 
-        # --- CORREÇÃO VISUAL APP: Gráfico de Rosca Limpo e Controlado ---
         col_graf1, col_graf2 = st.columns(2)
         with col_graf1:
             df_graficos = df_final[df_final['Status'] != 'Ignorado (Mão de Obra / Serviço)'].copy()
@@ -4122,7 +4121,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                 df_pie['Rotulo_Personalizado'] = df_pie['Status'] + " (" + df_pie['Porcentagem'].astype(str) + "%)"
                 
                 fig_pie = px.pie(df_pie, names='Rotulo_Personalizado', values='Item', hole=0.55, title="Conformidade Geral de Itens")
-                # textinfo='none' esconde a maçaroca de números, transferindo a leitura para a legenda
                 fig_pie.update_traces(textinfo='none', hoverinfo='label+percent')
                 fig_pie.update_layout(showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.0, title=""), margin=dict(t=40, b=20, l=0, r=0))
                 st.plotly_chart(fig_pie, use_container_width=True)
@@ -4262,26 +4260,28 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     t_kpi = Table(data_kpi, colWidths=[180, 120, 180])
                     t_kpi.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), cor_primaria), ('TEXTCOLOR', (0,0), (-1,0), colors.white), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 9), ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, cor_fundo_tabela]), ('GRID', (0,0), (-1,-1), 0.5, colors.lightgrey)]))
                     story.append(t_kpi)
-                    story.append(Spacer(1, 20))
+                    story.append(Spacer(1, 15))
 
-                    # --- CORREÇÃO VISUAL PDF: Gráficos Blindados Contra Sobreposição ---
+                    # --- CORREÇÃO VISUAL PDF: Gráficos EMPILHADOS na Vertical (2x1) ---
                     story.append(Paragraph("2. Diagnóstico Executivo de Causa Raiz", header_style))
                     
-                    fig_pdf, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5), facecolor='white')
+                    # Usa uma grade de 2 linhas e 1 coluna, ajustando a proporção para caber perfeitamente na página 1
+                    fig_pdf, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 7.5), facecolor='white', gridspec_kw={'height_ratios': [1, 1.2]})
                     
-                    # Gráfico 1: Rosca Limpa (Sem textos internos)
+                    # Gráfico Topo: Rosca Limpa
                     dados_r = df_graficos.groupby('Status')['Item'].count()
                     if not dados_r.empty:
                         pcts = 100. * dados_r.values / dados_r.values.sum()
                         labels_leg = [f"{idx} ({p:.1f}%)" for idx, p in zip(dados_r.index, pcts)]
                         
                         wedges, texts = ax1.pie(dados_r.values, startangle=140, colors=plt.cm.Paired.colors)
-                        ax1.legend(wedges, labels_leg, title="Status", loc="center left", bbox_to_anchor=(0.9, 0, 0.5, 1), fontsize=8)
+                        # A legenda fica perfeitamente alinhada à direita do gráfico de rosca
+                        ax1.legend(wedges, labels_leg, title="Status", loc="center left", bbox_to_anchor=(0.9, 0.5), fontsize=8)
                         centre_circle = plt.Circle((0,0), 0.55, fc='white')
                         ax1.add_artist(centre_circle)
                         ax1.set_title("Conformidade (Por Qtd. de Itens)", fontsize=11, fontweight='bold', color='#003366', pad=15)
                         
-                    # Gráfico 2: Causa Raiz (Afastamento Simétrico)
+                    # Gráfico Base: Causa Raiz (Usa a largura inteira)
                     df_mot_pdf = df_final[(df_final['Status'].str.contains('Fábrica:|Engenharia:|Alerta:')) & (df_final['Motivo'] != 'Não Informado')].copy()
                     if not df_mot_pdf.empty:
                         df_agrup_pdf = df_mot_pdf.groupby('Motivo')['Impacto Financeiro (R$)'].sum().reset_index()
@@ -4295,7 +4295,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         ax2.set_yticklabels(df_agrup_pdf['Motivo'].astype(str).tolist(), fontsize=8)
                         ax2.set_title("Impacto Financeiro por Causa Raiz", fontsize=11, fontweight='bold', color='#003366', pad=15)
                         
-                        # O TRUQUE DE MESTRE: Simetria no eixo X afasta as palavras das barras negativas
                         max_abs = df_agrup_pdf['Impacto Financeiro (R$)'].abs().max()
                         if max_abs == 0: max_abs = 100
                         ax2.set_xlim(-max_abs * 1.5, max_abs * 1.5)
@@ -4313,13 +4312,14 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         ax2.text(0.5, 0.5, "Classifique os motivos na tela\npara gerar este gráfico.", ha='center', va='center', fontsize=10, color='grey')
                         ax2.axis('off')
 
-                    fig_pdf.tight_layout()
+                    fig_pdf.tight_layout(pad=2.0) # Garante que os gráficos não colem um no outro
                     buf_p = BytesIO()
                     fig_pdf.savefig(buf_p, format='png', dpi=300, bbox_inches='tight')
                     buf_p.seek(0)
                     plt.close(fig_pdf)
                     
-                    story.append(RLImage(buf_p, width=520, height=195))
+                    # Dimensões calculadas a dedo para não vazar para a página 2 (mantendo o sumário na 1)
+                    story.append(RLImage(buf_p, width=470, height=410))
                     story.append(PageBreak())
                     
                     def add_tabela_pdf_motivo(df_sub, titulo):
