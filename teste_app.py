@@ -4248,7 +4248,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
         mask_exc = df_final['Status'].isin(['Consumo Excedente', 'Alerta: Consumido após Remoção'])
         if mask_exc.any():
-            st.markdown("#### 📉 1. Excedentes e Furos Críticos de Fábrica")
+            st.markdown("#### 📉 1. Consumo Excedente")
             df_exc = df_final[mask_exc][['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
             df_exc['Impacto_Abs'] = df_exc['Impacto Financeiro (R$)'].abs()
             df_exc = df_exc.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
@@ -4257,7 +4257,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
         mask_eco = df_final['Status'] == 'Consumo Abaixo da Qtd BOM'
         if mask_eco.any():
-            st.markdown("#### 📈 2. Economias de Fábrica")
+            st.markdown("#### 📈 2. Consumo Abaixo do Previsto na BOM")
             df_eco = df_final[mask_eco][['Item', 'Descrição', 'Status', 'Qtd Divergência', 'Impacto Financeiro (R$)', 'Motivo']].copy()
             df_eco['Impacto_Abs'] = df_eco['Impacto Financeiro (R$)'].abs()
             df_eco = df_eco.sort_values(by='Impacto_Abs', ascending=False).drop(columns=['Impacto_Abs'])
@@ -4446,7 +4446,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     add_tabela_pdf_motivo(df_exc, "3.1 Detalhamento: Excedentes e Furos Operacionais")
                     
                     df_eco = df_final[df_final['Status'] == 'Consumo Abaixo da Qtd BOM'].copy()
-                    add_tabela_pdf_motivo(df_eco, "3.2 Detalhamento: Economias de Fábrica")
+                    add_tabela_pdf_motivo(df_eco, "3.2 Detalhamento: Consumo Abaixo do Previsto na BOM")
                     
                     df_eng = df_final[df_final['Status'].str.contains('BOM')].copy()
                     add_tabela_pdf_motivo(df_eng, "3.3 Detalhamento: Divergências de BOM (Estrutura)")
