@@ -4417,12 +4417,13 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
                     story.append(Paragraph("RELATÓRIO EXECUTIVO DE AUDITORIA FINANCEIRA", title_style))
                     
-                    # --- NOVO: Cabeçalho com SO e Projeto ---
+                    # --- NOVO: Cabeçalho Unificado (SO, Projeto e Emissão numa única linha) ---
                     so_pdf = st.session_state.get('so_auditoria_atual', 'N/A')
                     proj_pdf = st.session_state.get('proj_auditoria_atual', 'N/A')
-                    story.append(Paragraph(f"<b>SO:</b> {so_pdf} | <b>Projeto:</b> {proj_pdf}", subtitle_style))
-                    story.append(Paragraph(f"<b>Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')} | <b>BOM Referência:</b> {st.session_state.get('nome_bom_base', 'N/A')}", subtitle_style))
-                    # ----------------------------------------
+                    emissao_pdf = datetime.now().strftime('%d/%m/%Y %H:%M')
+                    
+                    story.append(Paragraph(f"<b>SO:</b> {so_pdf} | <b>Projeto:</b> {proj_pdf} | <b>Emissão:</b> {emissao_pdf}", subtitle_style))
+                    # --------------------------------------------------------------------------
 
                     story.append(Paragraph("1. Sumário Financeiro da Ordem", header_style))
                     
