@@ -3933,10 +3933,12 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
     t_oh = float(dict_params.get('taxa_oh', 1.7569))
 
     with st.expander("📁 1. Carregamento de Planilhas", expanded=True):
-        c_up1, c_up2, c_up3 = st.columns(3)
+        c_up1, c_up2, c_up3, c_up4 = st.columns(4)
         file_bom_ini = c_up1.file_uploader("BOM Inicial (Opcional)", type=['xlsx', 'csv'])
         file_bom_fin = c_up2.file_uploader("BOM Final / Atual*", type=['xlsx', 'csv'])
         file_real = c_up3.file_uploader("Consumo Real*", type=['xlsx', 'csv'])
+        # NOVO: Upload do Price Calculation
+        file_cost = c_up4.file_uploader("Price Calculation (Custo WO)", type=['xlsx', 'csv'])
 
         if st.button("🚀 Processar Análise Executiva", type="primary", use_container_width=True):
             if not file_bom_fin or not file_real:
@@ -4109,8 +4111,27 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res['Impacto Financeiro (R$)'] = df_res.apply(calcular_impacto, axis=1)
                         df_res['Motivo'] = "Não Informado"
                         
+                        # --- NOVO: PROCESSAMENTO DO PRICE CALCULATION (PLANEJADO) ---
+                        dict_custos_plan = {'Labor Cost': 0.0, 'Labour OH': 0.0, 'Material Cost': 0.0}
+                        if file_cost:
+                            df_cost_plan = pd.read_csv(file_cost, sep=';', encoding='latin1') if file_cost.name.endswith('.csv') else pd.read_excel(file_cost)
+                            df_cost_plan.columns = df_cost_plan.columns.str.strip()
+                            if 'Code' in df_cost_plan.columns and 'Total' in df_cost_plan.columns:
+                                df_cost_plan['Code'] = df_cost_plan['Code'].astype(str).str.strip()
+                                
+                                val_labor = df_cost_plan.loc[df_cost_plan['Code'] == 'Labor Cost', 'Total'].max()
+                                if pd.notna(val_labor): dict_custos_plan['Labor Cost'] = float(val_labor)
+                                
+                                val_oh = df_cost_plan.loc[df_cost_plan['Code'] == 'Labour OH', 'Total'].max()
+                                if pd.notna(val_oh): dict_custos_plan['Labour OH'] = float(val_oh)
+                                
+                                val_mat = df_cost_plan.loc[df_cost_plan['Code'] == 'Material Cost', 'Total'].max()
+                                if pd.notna(val_mat): dict_custos_plan['Material Cost'] = float(val_mat)
+                        # ------------------------------------------------------------
+                        
                         st.session_state['res_audit_3way'] = df_res
                         st.session_state['nome_bom_base'] = file_bom_fin.name
+                        st.session_state['custos_plan_d365'] = dict_custos_plan # Salva os custos na sessão
                         st.success("✔️ Processamento concluído com sucesso!")
                     except Exception as e:
                         st.error(f"Erro ao processar planilhas: {e}")
@@ -4136,6 +4157,46 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         qtd_oh = df_final[df_final['Item'].str.upper() == 'MANUFACTURING OVERHEAD']['Consumption per lot size'].sum()
         valor_oh = qtd_oh * t_oh
         horas_totais = qtd_oh / t_hh if t_hh > 0 else 0
+
+        # =====================================================================
+        # INÍCIO DO CÓDIGO DO PASSO 3 (INSERIDO AQUI)
+        # =====================================================================
+        custos_plan = st.session_state.get('custos_plan_d365', {'Labor Cost': 0.0, 'Labour OH': 0.0, 'Material Cost': 0.0})
+        
+        # Realizado
+        real_labor = horas_totais * t_hh
+        real_oh = valor_oh
+        real_mat = custo_total_mat
+        
+        # Planejado (Price Calculation D365)
+        plan_labor = custos_plan['Labor Cost']
+        plan_oh = custos_plan['Labour OH']
+        plan_mat = custos_plan['Material Cost']
+        
+        # Deltas
+        delta_labor = real_labor - plan_labor
+        delta_oh = real_oh - plan_oh
+        delta_mat = real_mat - plan_mat
+        
+        st.markdown("### ⚖️ Auditoria de Variância (Planejado ERP vs Realizado App)")
+        
+        col_v1, col_v2, col_v3 = st.columns(3)
+        col_v1.metric("Mão de Obra (Labor)", f"R$ {real_labor:,.2f}", f"Desvio: R$ {delta_labor:,.2f}", delta_color="inverse")
+        col_v2.metric("Indiretos (Labour OH)", f"R$ {real_oh:,.2f}", f"Desvio: R$ {delta_oh:,.2f}", delta_color="inverse")
+        col_v3.metric("Total Material", f"R$ {real_mat:,.2f}", f"Desvio: R$ {delta_mat:,.2f}", delta_color="inverse")
+        
+        # Caixa de Justificativa se houver estouro
+        justificativa_desvio = "Sem desvios significativos no orçamento global."
+        tem_estouro = delta_labor > 0 or delta_mat > 0 or delta_oh > 0
+        if tem_estouro:
+            st.warning("⚠️ **Aviso Financeiro:** Foi detetado consumo excedente em relação à Tabela de Custo (Price Calculation). É necessário justificar o desvio.")
+            justificativa_desvio = st.text_area("Justificativa Técnica para Estouro de Orçamento (Labor/Material):", value=st.session_state.get('just_variancia', ''))
+            st.session_state['just_variancia'] = justificativa_desvio
+
+        st.markdown("---")
+        # =====================================================================
+        # FIM DO CÓDIGO DO PASSO 3
+        # =====================================================================
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Custo Total Material", f"R$ {custo_total_mat:,.2f}")
@@ -4366,9 +4427,44 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     story.append(t_kpi)
                     story.append(Spacer(1, 15))
 
+                    # =====================================================================
+                    # INÍCIO DO CÓDIGO DO PASSO 4 (INSERIDO AQUI)
+                    # =====================================================================
+                    if plan_labor > 0 or plan_mat > 0:
+                        story.append(Paragraph("1.1 Análise de Variância Orçamental (Price Calculation)", header_style))
+                        
+                        data_var = [
+                            ["Categoria", "Planejado (D365)", "Realizado (BOM/Fábrica)", "Desvio (R$)"],
+                            ["Labor Cost", f"R$ {plan_labor:,.2f}", f"R$ {real_labor:,.2f}", f"R$ {delta_labor:+,.2f}"],
+                            ["Labour OH", f"R$ {plan_oh:,.2f}", f"R$ {real_oh:,.2f}", f"R$ {delta_oh:+,.2f}"],
+                            ["Material Total", f"R$ {plan_mat:,.2f}", f"R$ {real_mat:,.2f}", f"R$ {delta_mat:+,.2f}"]
+                        ]
+                        
+                        t_var = Table(data_var, colWidths=[120, 120, 120, 120])
+                        t_var.setStyle(TableStyle([
+                            ('BACKGROUND', (0,0), (-1,0), cor_primaria), 
+                            ('TEXTCOLOR', (0,0), (-1,0), colors.white), 
+                            ('ALIGN', (0,0), (-1,-1), 'CENTER'), 
+                            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), 
+                            ('FONTSIZE', (0,0), (-1,-1), 9), 
+                            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, cor_fundo_tabela]), 
+                            ('GRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
+                            ('TEXTCOLOR', (3,1), (3,-1), colors.red) # Destaca o desvio a vermelho
+                        ]))
+                        story.append(t_var)
+                        
+                        if tem_estouro:
+                            story.append(Spacer(1, 10))
+                            story.append(Paragraph("<b>Justificativa Técnica do Desvio:</b>", styles['Normal']))
+                            story.append(Paragraph(f"<i>{justificativa_desvio}</i>", styles['Normal']))
+                            
+                        story.append(Spacer(1, 15))
+                    # =====================================================================
+                    # FIM DO CÓDIGO DO PASSO 4
+                    # =====================================================================
+
                     story.append(Paragraph("2. Diagnóstico Executivo de Causa Raiz", header_style))
                     
-                    # MUDANÇA AQUI: Criando 1 figura com 3 espaços (2 gráficos de pizza em cima, 1 de barras em baixo)
                     fig_pdf = plt.figure(figsize=(10, 8), facecolor='white')
                     gs = fig_pdf.add_gridspec(2, 2, height_ratios=[1, 1.2])
                     ax1 = fig_pdf.add_subplot(gs[0, 0]) # Pizza Esquerda (Quantitativo)
