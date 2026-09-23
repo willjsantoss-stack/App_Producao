@@ -3973,17 +3973,30 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         if 'Return lot ID' not in df_r.columns:
                             df_r['Return lot ID'] = None
 
+                        # --- CORREÇÃO DA BITRIBUTAÇÃO DE CUSTOS (SUB-ASSEMBLIES) ---
+                        # 1. Converte quantidade para número temporariamente
+                        df_r['qty_num_temp'] = pd.to_numeric(df_r['Quantity'], errors='coerce')
+                        
+                        # 2. Identifica itens que foram FABRICADOS na ordem (entrada positiva que NÃO é devolução)
+                        mask_positivos = df_r['qty_num_temp'] > 0
+                        mask_nao_devolucao = df_r['Return lot ID'].isna() | (df_r['Return lot ID'].astype(str).str.strip().isin(['', 'nan', 'None', 'NaN']))
+                        subconjuntos_fabricados = df_r[mask_positivos & mask_nao_devolucao]['Item number'].unique()
+                        
+                        # 3. Remove os subconjuntos da análise de consumo para não somar o custo 2 vezes
+                        df_r = df_r[~df_r['Item number'].isin(subconjuntos_fabricados)].copy()
+                        # -----------------------------------------------------------
+
                         def is_true_consumption(row):
-                            qty = pd.to_numeric(row['Quantity'], errors='coerce')
+                            qty = row['qty_num_temp']
                             if pd.isna(qty): return False
                             if qty < 0: return True
-                            if qty > 0 and pd.notna(row['Return lot ID']) and str(row['Return lot ID']).strip() not in ['', 'nan', 'None']:
+                            if qty > 0 and pd.notna(row['Return lot ID']) and str(row['Return lot ID']).strip() not in ['', 'nan', 'None', 'NaN']:
                                 return True
                             return False
 
                         df_r = df_r[df_r.apply(is_true_consumption, axis=1)].copy()
 
-                        df_r['Quantity'] = pd.to_numeric(df_r['Quantity'], errors='coerce').fillna(0) * -1
+                        df_r['Quantity'] = df_r['qty_num_temp'].fillna(0) * -1
                         if 'Physical cost amount' not in df_r.columns: df_r['Physical cost amount'] = 0.0
                         if 'Financial cost amount' not in df_r.columns: df_r['Financial cost amount'] = 0.0
                         df_r['Financial cost amount'] = pd.to_numeric(df_r['Financial cost amount'], errors='coerce').fillna(0) * -1
