@@ -4151,37 +4151,50 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         horas_totais = qtd_oh / t_hh if t_hh > 0 else 0
 
         # =====================================================================
-        # INÍCIO DO CÓDIGO DO PASSO 3 (INSERIDO AQUI)
+        # INÍCIO DO CÓDIGO DO PASSO 3 (ATUALIZADO PARA PUXAR HORAS REAIS)
         # =====================================================================
         custos_plan = st.session_state.get('custos_plan_d365', {'Labor Cost': 0.0, 'Labour OH': 0.0, 'Material Cost': 0.0})
+        so_atual = st.session_state.get('so_auditoria_atual', 'N/A')
         
-        # Realizado
-        real_labor = horas_totais * t_hh
-        real_oh = valor_oh
+        # 1. Busca das Horas REAIS no banco de dados da fábrica
+        horas_reais_bd = 0.0
+        if so_atual != 'N/A':
+            df_he_so = pd.read_sql_query("SELECT SUM(horas_normais + he_50 + he_100) as total FROM apontamentos WHERE so=%(so)s AND tipo IN ('Produção Normal', 'Retrabalho', 'Parada')", engine, params={"so": so_atual})
+            if not df_he_so.empty and pd.notna(df_he_so['total'].iloc[0]):
+                horas_reais_bd = float(df_he_so['total'].iloc[0])
+        
+        # 2. Realizado (Matemática Pura com a Realidade)
+        real_labor = horas_reais_bd * t_hh
+        real_oh = real_labor * t_oh
         real_mat = custo_total_mat
         
-        # Planejado (Price Calculation D365)
+        # 3. Planejado (Price Calculation D365)
         plan_labor = custos_plan['Labor Cost']
         plan_oh = custos_plan['Labour OH']
         plan_mat = custos_plan['Material Cost']
         
-        # Deltas
+        # 4. Deltas (Se > 0 é Prejuízo/Estouro, Se < 0 é Economia)
         delta_labor = real_labor - plan_labor
         delta_oh = real_oh - plan_oh
         delta_mat = real_mat - plan_mat
         
         st.markdown("### ⚖️ Auditoria de Variância (Planejado ERP vs Realizado App)")
+        if horas_reais_bd == 0:
+            st.warning(f"⚠️ Nenhuma hora de produção foi encontrada no banco de dados para a SO '{so_atual}'. O valor de Mão de Obra Realizado está zerado.")
         
         col_v1, col_v2, col_v3 = st.columns(3)
-        col_v1.metric("Mão de Obra (Labor)", f"R$ {real_labor:,.2f}", f"Desvio: R$ {delta_labor:,.2f}", delta_color="inverse")
-        col_v2.metric("Indiretos (Labour OH)", f"R$ {real_oh:,.2f}", f"Desvio: R$ {delta_oh:,.2f}", delta_color="inverse")
-        col_v3.metric("Total Material", f"R$ {real_mat:,.2f}", f"Desvio: R$ {delta_mat:,.2f}", delta_color="inverse")
         
-        # Caixa de Justificativa se houver estouro
+        # Correção visual: passamos apenas o valor numérico para a métrica não se perder com as setas
+        col_v1.metric(f"Mão de Obra Real ({horas_reais_bd:.1f}h)", f"R$ {real_labor:,.2f}", float(f"{delta_labor:.2f}"), delta_color="inverse")
+        col_v2.metric("Indiretos (Labour OH)", f"R$ {real_oh:,.2f}", float(f"{delta_oh:.2f}"), delta_color="inverse")
+        col_v3.metric("Total Material", f"R$ {real_mat:,.2f}", float(f"{delta_mat:.2f}"), delta_color="inverse")
+        
+        # 5. Caixa de Justificativa se houver estouro de orçamento
         justificativa_desvio = "Sem desvios significativos no orçamento global."
         tem_estouro = delta_labor > 0 or delta_mat > 0 or delta_oh > 0
+        
         if tem_estouro:
-            st.warning("⚠️ **Aviso Financeiro:** Foi detetado consumo excedente em relação à Tabela de Custo (Price Calculation). É necessário justificar o desvio.")
+            st.error("⚠️ **Alerta Financeiro:** Foi detetado consumo excedente (horas ou materiais) em relação à Tabela de Custo do ERP. É obrigatório justificar o desvio.")
             justificativa_desvio = st.text_area("Justificativa Técnica para Estouro de Orçamento (Labor/Material):", value=st.session_state.get('just_variancia', ''))
             st.session_state['just_variancia'] = justificativa_desvio
 
@@ -4410,7 +4423,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     story.append(Paragraph(f"<b>SO:</b> {so_pdf} | <b>Projeto:</b> {proj_pdf}", subtitle_style))
                     story.append(Paragraph(f"<b>Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')} | <b>BOM Referência:</b> {st.session_state.get('nome_bom_base', 'N/A')}", subtitle_style))
                     # ----------------------------------------
-                    
+
                     story.append(Paragraph("1. Sumário Financeiro da Ordem", header_style))
                     
                     qtd_sem_custo_pdf = len(df_final[(df_final['Quantity'] > 0) & (df_final['Custo Unitário'] == 0) & (~df_final['Eh_Kanban'])])
