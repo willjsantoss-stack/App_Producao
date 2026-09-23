@@ -3932,17 +3932,26 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
     t_hh = float(dict_params.get('taxa_hh', 77.17))
     t_oh = float(dict_params.get('taxa_oh', 1.7569))
 
-    with st.expander("📁 1. Carregamento de Planilhas", expanded=True):
+    with st.expander("📁 1. Carregamento de Planilhas e Identificação", expanded=True):
+        
+        # --- NOVO: Campos de Identificação da Ordem ---
+        c_id1, c_id2 = st.columns(2)
+        so_auditoria = c_id1.text_input("Número da SO (Ex: 826-001175):", placeholder="Digite a SO para vincular a auditoria")
+        proj_auditoria = c_id2.text_input("Nome do Projeto/Produto:", placeholder="Ex: SMARTVAC 17.5 kV")
+        st.markdown("---")
+        # ----------------------------------------------
+        
         c_up1, c_up2, c_up3, c_up4 = st.columns(4)
         file_bom_ini = c_up1.file_uploader("BOM Inicial (Opcional)", type=['xlsx', 'csv'])
         file_bom_fin = c_up2.file_uploader("BOM Final / Atual*", type=['xlsx', 'csv'])
         file_real = c_up3.file_uploader("Consumo Real*", type=['xlsx', 'csv'])
-        # NOVO: Upload do Price Calculation
         file_cost = c_up4.file_uploader("Price Calculation (Custo WO)", type=['xlsx', 'csv'])
 
         if st.button("🚀 Processar Análise Executiva", type="primary", use_container_width=True):
             if not file_bom_fin or not file_real:
                 st.error("❌ A BOM Final e o Consumo Real são obrigatórios para a análise.")
+            elif not so_auditoria.strip() or not proj_auditoria.strip():
+                st.error("❌ Por favor, preencha o Número da SO e o Nome do Projeto antes de processar.")
             else:
                 with st.spinner("Processando motor financeiro..."):
                     try:
@@ -3975,10 +3984,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         if 'Return lot ID' not in df_r.columns:
                             df_r['Return lot ID'] = None
 
-                        # 1. Converte quantidade para número temporariamente
                         df_r['qty_num_temp'] = pd.to_numeric(df_r['Quantity'], errors='coerce')
                         
-                        # 2. Identifica subconjuntos para NÃO somar o custo financeiro
                         mask_positivos = df_r['qty_num_temp'] > 0
                         mask_nao_devolucao = df_r['Return lot ID'].isna() | (df_r['Return lot ID'].astype(str).str.strip().isin(['', 'nan', 'None', 'NaN']))
                         subconjuntos_fabricados = df_r[mask_positivos & mask_nao_devolucao]['Item number'].unique().tolist()
@@ -4044,37 +4051,24 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
                         df_res['Custo Unitário'] = df_res.apply(calcular_custo_unitario, axis=1)
 
-                        # --- MOTOR INTELIGENTE DE CATEGORIZAÇÃO (CURVA ABC) ---
                         def classificar_categoria(codigo):
                             codigo = str(codigo).upper()
-                            if codigo.startswith('270') or codigo.startswith('271') or codigo.startswith('272'):
-                                return "Fixação (Parafusos/Porcas)"
-                            elif codigo.startswith('123'):
-                                return "Conectores e Terminais"
-                            elif codigo.startswith('292'):
-                                return "Identificadores/Etiquetas"
-                            elif 'CK' in codigo or codigo.startswith('723'):
-                                return "Cobre e Barramentos"
-                            elif codigo.startswith('121') or codigo.startswith('122') or codigo.startswith('137'):
-                                return "Chapas Mecânicas (Aço)"
-                            elif codigo.startswith('840') or codigo.startswith('842'):
-                                return "Componentes Elétricos (Reles/Disjuntores)"
-                            else:
-                                return "Outros Materiais (Diversos)"
+                            if codigo.startswith('270') or codigo.startswith('271') or codigo.startswith('272'): return "Fixação (Parafusos/Porcas)"
+                            elif codigo.startswith('123'): return "Conectores e Terminais"
+                            elif codigo.startswith('292'): return "Identificadores/Etiquetas"
+                            elif 'CK' in codigo or codigo.startswith('723'): return "Cobre e Barramentos"
+                            elif codigo.startswith('121') or codigo.startswith('122') or codigo.startswith('137'): return "Chapas Mecânicas (Aço)"
+                            elif codigo.startswith('840') or codigo.startswith('842'): return "Componentes Elétricos"
+                            else: return "Outros Materiais (Diversos)"
 
                         df_res['Categoria Material'] = df_res['Item'].apply(classificar_categoria)
-                        # ----------------------------------------------------------
                         
                         df_res['Desvio Engenharia'] = df_res['Consumption per lot size'] - df_res['qtd_ini']
                         df_res['Desvio Fábrica'] = df_res['Quantity'] - df_res['Consumption per lot size'] 
                         
-                        # --- CLASSIFICAÇÃO COM NOMENCLATURAS NOVAS ---
                         def classificar_status(r):
                             if r['Eh_Kanban']: return "Consumo Kanban"
-                            
-                            # MÁGICA AQUI: Classifica como subconjunto para anular da auditoria financeira
-                            if r['Item'] in subconjuntos_fabricados:
-                                return "Ignorado (Subconjunto Fábrica)"
+                            if r['Item'] in subconjuntos_fabricados: return "Ignorado (Subconjunto Fábrica)"
                                 
                             metodo = r['Método']
                             if metodo == 'N/A':
@@ -4096,11 +4090,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res['Status'] = df_res.apply(classificar_status, axis=1)
                         
                         def calcular_qtd_divergencia(r):
-                            # A busca agora é exata pelo prefixo 'BOM:' para não confundir com a palavra solta
-                            if str(r['Status']).startswith('BOM:'): 
-                                return r['Desvio Engenharia']
-                            if 'Consumo Excedente' in r['Status'] or 'Consumo Abaixo' in r['Status'] or 'Alerta' in r['Status']: 
-                                return r['Desvio Fábrica']
+                            if str(r['Status']).startswith('BOM:'): return r['Desvio Engenharia']
+                            if 'Consumo Excedente' in r['Status'] or 'Consumo Abaixo' in r['Status'] or 'Alerta' in r['Status']: return r['Desvio Fábrica']
                             return 0.0
 
                         df_res['Qtd Divergência'] = df_res.apply(calcular_qtd_divergencia, axis=1)
@@ -4111,27 +4102,28 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res['Impacto Financeiro (R$)'] = df_res.apply(calcular_impacto, axis=1)
                         df_res['Motivo'] = "Não Informado"
                         
-                        # --- NOVO: PROCESSAMENTO DO PRICE CALCULATION (PLANEJADO) ---
                         dict_custos_plan = {'Labor Cost': 0.0, 'Labour OH': 0.0, 'Material Cost': 0.0}
                         if file_cost:
                             df_cost_plan = pd.read_csv(file_cost, sep=';', encoding='latin1') if file_cost.name.endswith('.csv') else pd.read_excel(file_cost)
                             df_cost_plan.columns = df_cost_plan.columns.str.strip()
                             if 'Code' in df_cost_plan.columns and 'Total' in df_cost_plan.columns:
                                 df_cost_plan['Code'] = df_cost_plan['Code'].astype(str).str.strip()
-                                
                                 val_labor = df_cost_plan.loc[df_cost_plan['Code'] == 'Labor Cost', 'Total'].max()
                                 if pd.notna(val_labor): dict_custos_plan['Labor Cost'] = float(val_labor)
-                                
                                 val_oh = df_cost_plan.loc[df_cost_plan['Code'] == 'Labour OH', 'Total'].max()
                                 if pd.notna(val_oh): dict_custos_plan['Labour OH'] = float(val_oh)
-                                
                                 val_mat = df_cost_plan.loc[df_cost_plan['Code'] == 'Material Cost', 'Total'].max()
                                 if pd.notna(val_mat): dict_custos_plan['Material Cost'] = float(val_mat)
-                        # ------------------------------------------------------------
                         
                         st.session_state['res_audit_3way'] = df_res
                         st.session_state['nome_bom_base'] = file_bom_fin.name
-                        st.session_state['custos_plan_d365'] = dict_custos_plan # Salva os custos na sessão
+                        st.session_state['custos_plan_d365'] = dict_custos_plan
+                        
+                        # --- NOVO: Salvando a SO e Nome do Projeto na Sessão ---
+                        st.session_state['so_auditoria_atual'] = so_auditoria.strip()
+                        st.session_state['proj_auditoria_atual'] = proj_auditoria.strip()
+                        # -------------------------------------------------------
+                        
                         st.success("✔️ Processamento concluído com sucesso!")
                     except Exception as e:
                         st.error(f"Erro ao processar planilhas: {e}")
@@ -4361,23 +4353,30 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         
         if col_b1.button("📥 Gravar Histórico no Banco (Com Justificativas)", type="primary", use_container_width=True):
             with st.spinner("Gravando desvios e motivos..."):
-                try: cursor.execute("ALTER TABLE auditoria_3vias_historico ADD COLUMN IF NOT EXISTS motivo TEXT")
+                # Garante que as novas colunas existam no banco
+                try: 
+                    cursor.execute("ALTER TABLE auditoria_3vias_historico ADD COLUMN IF NOT EXISTS motivo TEXT")
+                    cursor.execute("ALTER TABLE auditoria_3vias_historico ADD COLUMN IF NOT EXISTS so TEXT")
+                    cursor.execute("ALTER TABLE auditoria_3vias_historico ADD COLUMN IF NOT EXISTS nome_projeto TEXT")
                 except: pass
                 conn.commit()
+                
+                so_salvar = st.session_state.get('so_auditoria_atual', 'N/A')
+                proj_salvar = st.session_state.get('proj_auditoria_atual', 'N/A')
                 
                 df_gravar = df_final[df_final['Status'].str.contains('Consumo Excedente|Consumo Abaixo da Qtd BOM|BOM:|Alerta:')]
                 for _, r in df_gravar.iterrows():
                     cursor.execute("""
                         INSERT INTO auditoria_3vias_historico 
-                        (data_auditoria, item, descricao, qtd_bom_inicial, qtd_bom_final, qtd_real, desvio_engenharia, desvio_fabrica, valor_impacto, status, motivo)
-                        VALUES (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        (data_auditoria, item, descricao, qtd_bom_inicial, qtd_bom_final, qtd_real, desvio_engenharia, desvio_fabrica, valor_impacto, status, motivo, so, nome_projeto)
+                        VALUES (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         r['Item'], r['Descrição'], r['qtd_ini'], r['Consumption per lot size'], 
                         r['Quantity'], r['Desvio Engenharia'], r['Desvio Fábrica'], 
-                        r['Impacto Financeiro (R$)'], r['Status'], r['Motivo']
+                        r['Impacto Financeiro (R$)'], r['Status'], r['Motivo'], so_salvar, proj_salvar
                     ))
                 conn.commit()
-                st.success(f"✔️ {len(df_gravar)} desvios gravados no banco de dados!")
+                st.success(f"✔️ {len(df_gravar)} desvios da SO {so_salvar} gravados no banco de dados!")
 
         if col_b2.button("📄 Gerar Relatório Executivo (PDF)", use_container_width=True):
             with st.spinner("Desenhando documento executivo..."):
@@ -4404,8 +4403,14 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     header_style = ParagraphStyle(name='HeaderCorp', parent=styles['Heading2'], spaceAfter=10, textColor=cor_primaria, fontName="Helvetica-Bold", fontSize=12, spaceBefore=15)
 
                     story.append(Paragraph("RELATÓRIO EXECUTIVO DE AUDITORIA FINANCEIRA", title_style))
-                    story.append(Paragraph(f"<b>Data da Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')} | <b>BOM de Referência:</b> {st.session_state.get('nome_bom_base', 'Desconhecido')}", subtitle_style))
-
+                    
+                    # --- NOVO: Cabeçalho com SO e Projeto ---
+                    so_pdf = st.session_state.get('so_auditoria_atual', 'N/A')
+                    proj_pdf = st.session_state.get('proj_auditoria_atual', 'N/A')
+                    story.append(Paragraph(f"<b>SO:</b> {so_pdf} | <b>Projeto:</b> {proj_pdf}", subtitle_style))
+                    story.append(Paragraph(f"<b>Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')} | <b>BOM Referência:</b> {st.session_state.get('nome_bom_base', 'N/A')}", subtitle_style))
+                    # ----------------------------------------
+                    
                     story.append(Paragraph("1. Sumário Financeiro da Ordem", header_style))
                     
                     qtd_sem_custo_pdf = len(df_final[(df_final['Quantity'] > 0) & (df_final['Custo Unitário'] == 0) & (~df_final['Eh_Kanban'])])
