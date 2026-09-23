@@ -4368,24 +4368,43 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
                     story.append(Paragraph("2. Diagnóstico Executivo de Causa Raiz", header_style))
                     
-                    fig_pdf, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 7.5), facecolor='white', gridspec_kw={'height_ratios': [1, 1.2]})
+                    # MUDANÇA AQUI: Criando 1 figura com 3 espaços (2 gráficos de pizza em cima, 1 de barras em baixo)
+                    fig_pdf = plt.figure(figsize=(10, 8), facecolor='white')
+                    gs = fig_pdf.add_gridspec(2, 2, height_ratios=[1, 1.2])
+                    ax1 = fig_pdf.add_subplot(gs[0, 0]) # Pizza Esquerda (Quantitativo)
+                    ax2 = fig_pdf.add_subplot(gs[0, 1]) # Pizza Direita (Financeiro)
+                    ax3 = fig_pdf.add_subplot(gs[1, :]) # Barras Em Baixo (Causa Raiz)
                     
-                    # MUDANÇA AQUI: Agrupa pelo Custo Real Total
-                    dados_r = df_graficos.groupby('Status')['Custo Real Total'].sum()
-                    
-                    if not dados_r.empty:
-                        pcts = 100. * dados_r.values / dados_r.values.sum()
-                        labels_leg = [f"{idx} ({p:.1f}%)" for idx, p in zip(dados_r.index, pcts)]
+                    # --- GRÁFICO 1 (ESQUERDA): CONFORMIDADE INDUSTRIAL (Qtd Itens) ---
+                    dados_q = df_graficos.groupby('Status')['Item'].count()
+                    if not dados_q.empty:
+                        pcts_q = 100. * dados_q.values / dados_q.values.sum()
+                        labels_leg_q = [f"{idx} ({p:.1f}%)" for idx, p in zip(dados_q.index, pcts_q)]
+                        cores_pie_q = [mapa_cores.get(cat, '#cccccc') for cat in dados_q.index]
                         
-                        cores_pie_pdf = [mapa_cores.get(cat, '#cccccc') for cat in dados_r.index]
+                        wedges_q, texts_q = ax1.pie(dados_q.values, startangle=140, colors=cores_pie_q)
                         
-                        wedges, texts = ax1.pie(dados_r.values, startangle=140, colors=cores_pie_pdf)
-                        ax1.legend(wedges, labels_leg, title="Status", loc="center left", bbox_to_anchor=(0.9, 0.5), fontsize=8)
-                        centre_circle = plt.Circle((0,0), 0.55, fc='white')
-                        ax1.add_artist(centre_circle)
-                        # MUDANÇA AQUI: Atualiza o título do gráfico
-                        ax1.set_title("Conformidade Financeira (Por Custo Total R$)", fontsize=11, fontweight='bold', color='#003366', pad=15)
+                        # Legenda e formatação
+                        ax1.legend(wedges_q, labels_leg_q, loc="center left", bbox_to_anchor=(0.9, 0.5), fontsize=7)
+                        centre_circle_q = plt.Circle((0,0), 0.55, fc='white')
+                        ax1.add_artist(centre_circle_q)
+                        ax1.set_title("Conformidade Industrial (Por Qtd. Itens)", fontsize=10, fontweight='bold', color='#003366', pad=10)
+
+                    # --- GRÁFICO 2 (DIREITA): CONFORMIDADE FINANCEIRA (Custo R$) ---
+                    dados_f = df_graficos.groupby('Status')['Custo Real Total'].sum()
+                    if not dados_f.empty:
+                        pcts_f = 100. * dados_f.values / dados_f.values.sum()
+                        labels_leg_f = [f"{idx} ({p:.1f}%)" for idx, p in zip(dados_f.index, pcts_f)]
+                        cores_pie_f = [mapa_cores.get(cat, '#cccccc') for cat in dados_f.index]
                         
+                        wedges_f, texts_f = ax2.pie(dados_f.values, startangle=140, colors=cores_pie_f)
+                        
+                        ax2.legend(wedges_f, labels_leg_f, loc="center left", bbox_to_anchor=(0.9, 0.5), fontsize=7)
+                        centre_circle_f = plt.Circle((0,0), 0.55, fc='white')
+                        ax2.add_artist(centre_circle_f)
+                        ax2.set_title("Conformidade Financeira (Por Custo R$)", fontsize=10, fontweight='bold', color='#003366', pad=10)
+                        
+                    # --- GRÁFICO 3 (EM BAIXO): IMPACTO POR CAUSA RAIZ ---
                     df_mot_pdf = df_final[(df_final['Status'].str.contains('Consumo Excedente|Consumo Abaixo da Qtd BOM|BOM:|Alerta:')) & (df_final['Motivo'] != 'Não Informado')].copy()
                     if not df_mot_pdf.empty:
                         df_agrup_pdf = df_mot_pdf.groupby('Motivo')['Impacto Financeiro (R$)'].sum().reset_index()
@@ -4394,35 +4413,35 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         y_pos = np.arange(len(df_agrup_pdf))
                         cores_barras = ['#d62728' if val > 0 else '#2ca02c' for val in df_agrup_pdf['Impacto Financeiro (R$)']]
                         
-                        ax2.barh(y_pos, df_agrup_pdf['Impacto Financeiro (R$)'], color=cores_barras, height=0.6)
-                        ax2.set_yticks(y_pos)
-                        ax2.set_yticklabels(df_agrup_pdf['Motivo'].astype(str).tolist(), fontsize=8)
-                        ax2.set_title("Impacto Financeiro por Causa Raiz", fontsize=11, fontweight='bold', color='#003366', pad=15)
+                        ax3.barh(y_pos, df_agrup_pdf['Impacto Financeiro (R$)'], color=cores_barras, height=0.5)
+                        ax3.set_yticks(y_pos)
+                        ax3.set_yticklabels(df_agrup_pdf['Motivo'].astype(str).tolist(), fontsize=8)
+                        ax3.set_title("Impacto Financeiro por Causa Raiz", fontsize=11, fontweight='bold', color='#003366', pad=25)
                         
                         max_abs = df_agrup_pdf['Impacto Financeiro (R$)'].abs().max()
                         if max_abs == 0: max_abs = 100
-                        ax2.set_xlim(-max_abs * 1.5, max_abs * 1.5)
-                        ax2.axvline(0, color='black', linewidth=0.8, linestyle='--')
+                        ax3.set_xlim(-max_abs * 1.5, max_abs * 1.5)
+                        ax3.axvline(0, color='black', linewidth=0.8, linestyle='--')
                         
-                        ax2.spines['top'].set_visible(False)
-                        ax2.spines['right'].set_visible(False)
-                        ax2.spines['left'].set_visible(False)
+                        ax3.spines['top'].set_visible(False)
+                        ax3.spines['right'].set_visible(False)
+                        ax3.spines['left'].set_visible(False)
                         
                         for i, v in enumerate(df_agrup_pdf['Impacto Financeiro (R$)']):
                             offset = max_abs * 0.05 if v >= 0 else -max_abs * 0.05
                             align = 'left' if v >= 0 else 'right'
-                            ax2.text(v + offset, i, f"R$ {v:+,.0f}", color='black', va='center', ha=align, fontsize=8, fontweight='bold')
+                            ax3.text(v + offset, i, f"R$ {v:+,.0f}", color='black', va='center', ha=align, fontsize=8, fontweight='bold')
                     else:
-                        ax2.text(0.5, 0.5, "Classifique os motivos na tela\npara gerar este gráfico.", ha='center', va='center', fontsize=10, color='grey')
-                        ax2.axis('off')
+                        ax3.text(0.5, 0.5, "Classifique os motivos na tela\npara gerar este gráfico.", ha='center', va='center', fontsize=10, color='grey')
+                        ax3.axis('off')
 
-                    fig_pdf.tight_layout(pad=2.0) 
+                    fig_pdf.tight_layout(pad=3.0) 
                     buf_p = BytesIO()
                     fig_pdf.savefig(buf_p, format='png', dpi=300, bbox_inches='tight')
                     buf_p.seek(0)
                     plt.close(fig_pdf)
                     
-                    story.append(RLImage(buf_p, width=470, height=410))
+                    story.append(RLImage(buf_p, width=520, height=416))
                     story.append(PageBreak())
                     
                     def add_tabela_pdf_motivo(df_sub, titulo):
