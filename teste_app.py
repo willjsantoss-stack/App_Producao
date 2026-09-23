@@ -3973,18 +3973,13 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         if 'Return lot ID' not in df_r.columns:
                             df_r['Return lot ID'] = None
 
-                        # --- CORREÇÃO DA BITRIBUTAÇÃO DE CUSTOS (SUB-ASSEMBLIES) ---
                         # 1. Converte quantidade para número temporariamente
                         df_r['qty_num_temp'] = pd.to_numeric(df_r['Quantity'], errors='coerce')
                         
-                        # 2. Identifica itens que foram FABRICADOS na ordem (entrada positiva que NÃO é devolução)
+                        # 2. Identifica subconjuntos para NÃO somar o custo financeiro
                         mask_positivos = df_r['qty_num_temp'] > 0
                         mask_nao_devolucao = df_r['Return lot ID'].isna() | (df_r['Return lot ID'].astype(str).str.strip().isin(['', 'nan', 'None', 'NaN']))
-                        subconjuntos_fabricados = df_r[mask_positivos & mask_nao_devolucao]['Item number'].unique()
-                        
-                        # 3. Remove os subconjuntos da análise de consumo para não somar o custo 2 vezes
-                        df_r = df_r[~df_r['Item number'].isin(subconjuntos_fabricados)].copy()
-                        # -----------------------------------------------------------
+                        subconjuntos_fabricados = df_r[mask_positivos & mask_nao_devolucao]['Item number'].unique().tolist()
 
                         def is_true_consumption(row):
                             qty = row['qty_num_temp']
@@ -4053,6 +4048,11 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         # --- CLASSIFICAÇÃO COM NOMENCLATURAS NOVAS ---
                         def classificar_status(r):
                             if r['Eh_Kanban']: return "Consumo Kanban"
+                            
+                            # MÁGICA AQUI: Classifica como subconjunto para anular da auditoria financeira
+                            if r['Item'] in subconjuntos_fabricados:
+                                return "Ignorado (Subconjunto Fábrica)"
+                                
                             metodo = r['Método']
                             if metodo == 'N/A':
                                 if r['qtd_ini'] > 0 or r['Consumption per lot size'] > 0: return "Ignorado (Mão de Obra / Serviço)"
@@ -4103,7 +4103,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         st.markdown("---")
         st.markdown("### 📈 Painel Analítico de Custos")
         
-        mask_mat = (df_final['Item'].str.upper() != 'MANUFACTURING OVERHEAD') & (df_final['Status'] != 'Ignorado (Mão de Obra / Serviço)')
+        mask_mat = (df_final['Item'].str.upper() != 'MANUFACTURING OVERHEAD') & (~df_final['Status'].str.startswith('Ignorado'))
         custo_total_mat = df_final[mask_mat]['Custo Real Total'].sum()
         custo_kbn = df_final[df_final['Eh_Kanban'] == True]['Custo Real Total'].sum()
         pct_kbn = (custo_kbn / custo_total_mat * 100) if custo_total_mat > 0 else 0
@@ -4142,7 +4142,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
         col_graf1, col_graf2 = st.columns(2)
         with col_graf1:
-            df_graficos = df_final[df_final['Status'] != 'Ignorado (Mão de Obra / Serviço)'].copy()
+            df_graficos = df_final[~df_final['Status'].str.startswith('Ignorado')].copy()
             df_pie = df_graficos.groupby('Status')['Item'].count().reset_index()
             if not df_pie.empty:
                 total_itens = df_pie['Item'].sum()
