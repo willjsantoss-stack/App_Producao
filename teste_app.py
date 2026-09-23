@@ -4161,28 +4161,50 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
             "Alerta: Consumido após Remoção": "#7f7f7f" # Cinza
         }
 
+        # -------------------------------------------------------------
+        # DESENHO DOS DOIS GRÁFICOS LADO A LADO (INDUSTRIAL vs FINANCEIRO)
+        # -------------------------------------------------------------
         col_graf1, col_graf2 = st.columns(2)
-        with col_graf1:
-            df_graficos = df_final[~df_final['Status'].str.startswith('Ignorado')].copy()
-            # MUDANÇA AQUI: Agora agrupa pelo Custo Real Total
-            df_pie = df_graficos.groupby('Status')['Custo Real Total'].sum().reset_index()
-            if not df_pie.empty:
-                total_custo = df_pie['Custo Real Total'].sum()
-                df_pie['Porcentagem'] = (df_pie['Custo Real Total'] / total_custo * 100).round(1)
-                df_pie['Rotulo_Personalizado'] = df_pie['Status'] + " (" + df_pie['Porcentagem'].astype(str) + "%)"
-                
-                # MUDANÇA AQUI: Atualiza o título e o valor (values)
-                fig_pie = px.pie(df_pie, names='Status', values='Custo Real Total', hole=0.55, title="Conformidade Financeira (Por Custo Total R$)", color='Status', color_discrete_map=mapa_cores, custom_data=['Rotulo_Personalizado'])
+        
+        # Filtramos para remover "Ignorado" de ambos os gráficos
+        df_graficos = df_final[~df_final['Status'].str.startswith('Ignorado')].copy()
 
-                fig_pie.update_traces(textinfo='none', hovertemplate="%{customdata[0]}<extra></extra>")
+        with col_graf1:
+            # GRÁFICO 1: QUANTITATIVO (Por número de Itens - Realidade de Fábrica)
+            df_pie_qtd = df_graficos.groupby('Status')['Item'].count().reset_index()
+            if not df_pie_qtd.empty:
+                total_itens = df_pie_qtd['Item'].sum()
+                df_pie_qtd['Porcentagem'] = (df_pie_qtd['Item'] / total_itens * 100).round(1)
+                df_pie_qtd['Rotulo_Personalizado'] = df_pie_qtd['Status'] + " (" + df_pie_qtd['Porcentagem'].astype(str) + "%)"
                 
-                # Ajusta a legenda para mostrar os Rótulos Personalizados (com a % do lado)
-                for i, trace in enumerate(fig_pie.data[0].labels):
-                    rotulo_correto = df_pie[df_pie['Status'] == trace]['Rotulo_Personalizado'].values[0]
-                    fig_pie.data[0].labels[i] = rotulo_correto
+                fig_pie_qtd = px.pie(df_pie_qtd, names='Status', values='Item', hole=0.55, title="Conformidade Industrial (Por Qtd. de Itens)", color='Status', color_discrete_map=mapa_cores, custom_data=['Rotulo_Personalizado'])
+                fig_pie_qtd.update_traces(textinfo='none', hovertemplate="%{customdata[0]}<extra></extra>")
                 
-                fig_pie.update_layout(showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.0, title=""), margin=dict(t=40, b=20, l=0, r=0))
-                st.plotly_chart(fig_pie, use_container_width=True)
+                for i, trace in enumerate(fig_pie_qtd.data[0].labels):
+                    rotulo_correto = df_pie_qtd[df_pie_qtd['Status'] == trace]['Rotulo_Personalizado'].values[0]
+                    fig_pie_qtd.data[0].labels[i] = rotulo_correto
+                
+                fig_pie_qtd.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, title=""), margin=dict(t=40, b=80, l=0, r=0))
+                st.plotly_chart(fig_pie_qtd, use_container_width=True)
+
+        with col_graf2:
+            # GRÁFICO 2: FINANCEIRO (Por Custo Total R$ - Realidade Executiva)
+            df_pie_fin = df_graficos.groupby('Status')['Custo Real Total'].sum().reset_index()
+            if not df_pie_fin.empty:
+                total_custo = df_pie_fin['Custo Real Total'].sum()
+                df_pie_fin['Porcentagem'] = (df_pie_fin['Custo Real Total'] / total_custo * 100).round(1)
+                df_pie_fin['Rotulo_Personalizado'] = df_pie_fin['Status'] + " (" + df_pie_fin['Porcentagem'].astype(str) + "%)"
+                
+                fig_pie_fin = px.pie(df_pie_fin, names='Status', values='Custo Real Total', hole=0.55, title="Conformidade Financeira (Por Custo R$)", color='Status', color_discrete_map=mapa_cores, custom_data=['Rotulo_Personalizado'])
+                fig_pie_fin.update_traces(textinfo='none', hovertemplate="%{customdata[0]}<extra></extra>")
+                
+                for i, trace in enumerate(fig_pie_fin.data[0].labels):
+                    rotulo_correto = df_pie_fin[df_pie_fin['Status'] == trace]['Rotulo_Personalizado'].values[0]
+                    fig_pie_fin.data[0].labels[i] = rotulo_correto
+                
+                fig_pie_fin.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, title=""), margin=dict(t=40, b=80, l=0, r=0))
+                st.plotly_chart(fig_pie_fin, use_container_width=True)
+        # -------------------------------------------------------------
 
         st.markdown("---")
         st.markdown("### 📋 Classificação Analítica")
@@ -4271,39 +4293,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
             st.plotly_chart(fig_mot, use_container_width=True)
         else:
             st.info("💡 Classifique os motivos nas tabelas acima para gerar o gráfico executivo de Causas Raízes.")
-
-        st.markdown("---")
-        st.markdown("### 💰 Curva ABC: Distribuição de Custo por Categoria de Material")
-        st.write("Entenda onde o orçamento está concentrado para focar os esforços de engenharia e suprimentos.")
-        
-        # Filtra os itens ignorados
-        df_categorias = df_final[~df_final['Status'].str.startswith('Ignorado')].copy()
-        
-        if not df_categorias.empty:
-            df_cat_agrupado = df_categorias.groupby('Categoria Material')['Custo Real Total'].sum().reset_index()
-            df_cat_agrupado = df_cat_agrupado.sort_values(by='Custo Real Total', ascending=True)
-            
-            df_cat_agrupado['text_fmt'] = df_cat_agrupado['Custo Real Total'].apply(lambda x: f"R$ {x:,.2f}")
-            
-            fig_cat = go.Figure(go.Bar(
-                x=df_cat_agrupado['Custo Real Total'],
-                y=df_cat_agrupado['Categoria Material'],
-                orientation='h',
-                text=df_cat_agrupado['text_fmt'],
-                textposition='outside',
-                marker_color='#17a2b8' # Azul Metálico
-            ))
-            
-            fig_cat.update_layout(
-                title="Custo Total Aplicado (R$) por Família de Itens", 
-                yaxis=dict(title=""), 
-                xaxis=dict(title="Custo Real Total (R$)"), 
-                margin=dict(t=40, b=10, l=150)
-            )
-            
-            st.plotly_chart(fig_cat, use_container_width=True)
-        else:
-            st.info("Não há dados suficientes para a análise de categoria.")
 
         st.markdown("---")
         st.markdown("### 💾 Salvar e Exportar Auditoria")
