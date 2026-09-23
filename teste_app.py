@@ -4041,6 +4041,27 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                             return r['Cost price per unit']
 
                         df_res['Custo Unitário'] = df_res.apply(calcular_custo_unitario, axis=1)
+
+                        # --- MOTOR INTELIGENTE DE CATEGORIZAÇÃO (CURVA ABC) ---
+                        def classificar_categoria(codigo):
+                            codigo = str(codigo).upper()
+                            if codigo.startswith('270') or codigo.startswith('271') or codigo.startswith('272'):
+                                return "Fixação (Parafusos/Porcas)"
+                            elif codigo.startswith('123'):
+                                return "Conectores e Terminais"
+                            elif codigo.startswith('292'):
+                                return "Identificadores/Etiquetas"
+                            elif 'CK' in codigo or codigo.startswith('723'):
+                                return "Cobre e Barramentos"
+                            elif codigo.startswith('121') or codigo.startswith('122') or codigo.startswith('137'):
+                                return "Chapas Mecânicas (Aço)"
+                            elif codigo.startswith('840') or codigo.startswith('842'):
+                                return "Componentes Elétricos (Reles/Disjuntores)"
+                            else:
+                                return "Outros Materiais (Diversos)"
+
+                        df_res['Categoria Material'] = df_res['Item'].apply(classificar_categoria)
+                        # ----------------------------------------------------------
                         
                         df_res['Desvio Engenharia'] = df_res['Consumption per lot size'] - df_res['qtd_ini']
                         df_res['Desvio Fábrica'] = df_res['Quantity'] - df_res['Consumption per lot size'] 
@@ -4143,18 +4164,16 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         col_graf1, col_graf2 = st.columns(2)
         with col_graf1:
             df_graficos = df_final[~df_final['Status'].str.startswith('Ignorado')].copy()
-            
-            # MUDANÇA: Agora agrupa somando o Custo Real em vez de contar a quantidade de itens
-            df_pie = df_graficos.groupby('Status')['Custo Real Total'].sum().reset_index() 
-            
+            # MUDANÇA AQUI: Agora agrupa pelo Custo Real Total
+            df_pie = df_graficos.groupby('Status')['Custo Real Total'].sum().reset_index()
             if not df_pie.empty:
                 total_custo = df_pie['Custo Real Total'].sum()
                 df_pie['Porcentagem'] = (df_pie['Custo Real Total'] / total_custo * 100).round(1)
                 df_pie['Rotulo_Personalizado'] = df_pie['Status'] + " (" + df_pie['Porcentagem'].astype(str) + "%)"
                 
-                # Aplica o mapa de cores na tela e altera o título
+                # MUDANÇA AQUI: Atualiza o título e o valor (values)
                 fig_pie = px.pie(df_pie, names='Status', values='Custo Real Total', hole=0.55, title="Conformidade Financeira (Por Custo Total R$)", color='Status', color_discrete_map=mapa_cores, custom_data=['Rotulo_Personalizado'])
-                
+
                 fig_pie.update_traces(textinfo='none', hovertemplate="%{customdata[0]}<extra></extra>")
                 
                 # Ajusta a legenda para mostrar os Rótulos Personalizados (com a % do lado)
@@ -4253,6 +4272,38 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         else:
             st.info("💡 Classifique os motivos nas tabelas acima para gerar o gráfico executivo de Causas Raízes.")
 
+        st.markdown("---")
+        st.markdown("### 💰 Curva ABC: Distribuição de Custo por Categoria de Material")
+        st.write("Entenda onde o orçamento está concentrado para focar os esforços de engenharia e suprimentos.")
+        
+        # Filtra os itens ignorados
+        df_categorias = df_final[~df_final['Status'].str.startswith('Ignorado')].copy()
+        
+        if not df_categorias.empty:
+            df_cat_agrupado = df_categorias.groupby('Categoria Material')['Custo Real Total'].sum().reset_index()
+            df_cat_agrupado = df_cat_agrupado.sort_values(by='Custo Real Total', ascending=True)
+            
+            df_cat_agrupado['text_fmt'] = df_cat_agrupado['Custo Real Total'].apply(lambda x: f"R$ {x:,.2f}")
+            
+            fig_cat = go.Figure(go.Bar(
+                x=df_cat_agrupado['Custo Real Total'],
+                y=df_cat_agrupado['Categoria Material'],
+                orientation='h',
+                text=df_cat_agrupado['text_fmt'],
+                textposition='outside',
+                marker_color='#17a2b8' # Azul Metálico
+            ))
+            
+            fig_cat.update_layout(
+                title="Custo Total Aplicado (R$) por Família de Itens", 
+                yaxis=dict(title=""), 
+                xaxis=dict(title="Custo Real Total (R$)"), 
+                margin=dict(t=40, b=10, l=150)
+            )
+            
+            st.plotly_chart(fig_cat, use_container_width=True)
+        else:
+            st.info("Não há dados suficientes para a análise de categoria.")
 
         st.markdown("---")
         st.markdown("### 💾 Salvar e Exportar Auditoria")
@@ -4330,21 +4381,20 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     
                     fig_pdf, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 7.5), facecolor='white', gridspec_kw={'height_ratios': [1, 1.2]})
                     
-                    # MUDANÇA: Agrupa pelo Custo Real Total no PDF
-                    dados_r = df_graficos.groupby('Status')['Custo Real Total'].sum() 
+                    # MUDANÇA AQUI: Agrupa pelo Custo Real Total
+                    dados_r = df_graficos.groupby('Status')['Custo Real Total'].sum()
                     
                     if not dados_r.empty:
                         pcts = 100. * dados_r.values / dados_r.values.sum()
                         labels_leg = [f"{idx} ({p:.1f}%)" for idx, p in zip(dados_r.index, pcts)]
                         
-                        # Aplica o mapa de cores no PDF usando as chaves agrupadas
                         cores_pie_pdf = [mapa_cores.get(cat, '#cccccc') for cat in dados_r.index]
                         
                         wedges, texts = ax1.pie(dados_r.values, startangle=140, colors=cores_pie_pdf)
                         ax1.legend(wedges, labels_leg, title="Status", loc="center left", bbox_to_anchor=(0.9, 0.5), fontsize=8)
                         centre_circle = plt.Circle((0,0), 0.55, fc='white')
                         ax1.add_artist(centre_circle)
-                        # Título atualizado
+                        # MUDANÇA AQUI: Atualiza o título do gráfico
                         ax1.set_title("Conformidade Financeira (Por Custo Total R$)", fontsize=11, fontweight='bold', color='#003366', pad=15)
                         
                     df_mot_pdf = df_final[(df_final['Status'].str.contains('Consumo Excedente|Consumo Abaixo da Qtd BOM|BOM:|Alerta:')) & (df_final['Motivo'] != 'Não Informado')].copy()
