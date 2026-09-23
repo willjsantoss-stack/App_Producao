@@ -4143,14 +4143,17 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         col_graf1, col_graf2 = st.columns(2)
         with col_graf1:
             df_graficos = df_final[~df_final['Status'].str.startswith('Ignorado')].copy()
-            df_pie = df_graficos.groupby('Status')['Item'].count().reset_index()
+            
+            # MUDANÇA: Agora agrupa somando o Custo Real em vez de contar a quantidade de itens
+            df_pie = df_graficos.groupby('Status')['Custo Real Total'].sum().reset_index() 
+            
             if not df_pie.empty:
-                total_itens = df_pie['Item'].sum()
-                df_pie['Porcentagem'] = (df_pie['Item'] / total_itens * 100).round(1)
+                total_custo = df_pie['Custo Real Total'].sum()
+                df_pie['Porcentagem'] = (df_pie['Custo Real Total'] / total_custo * 100).round(1)
                 df_pie['Rotulo_Personalizado'] = df_pie['Status'] + " (" + df_pie['Porcentagem'].astype(str) + "%)"
                 
-                # Aplica o mapa de cores na tela
-                fig_pie = px.pie(df_pie, names='Status', values='Item', hole=0.55, title="Conformidade Geral de Itens", color='Status', color_discrete_map=mapa_cores, custom_data=['Rotulo_Personalizado'])
+                # Aplica o mapa de cores na tela e altera o título
+                fig_pie = px.pie(df_pie, names='Status', values='Custo Real Total', hole=0.55, title="Conformidade Financeira (Por Custo Total R$)", color='Status', color_discrete_map=mapa_cores, custom_data=['Rotulo_Personalizado'])
                 
                 fig_pie.update_traces(textinfo='none', hovertemplate="%{customdata[0]}<extra></extra>")
                 
@@ -4327,7 +4330,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     
                     fig_pdf, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 7.5), facecolor='white', gridspec_kw={'height_ratios': [1, 1.2]})
                     
-                    dados_r = df_graficos.groupby('Status')['Item'].count()
+                    # MUDANÇA: Agrupa pelo Custo Real Total no PDF
+                    dados_r = df_graficos.groupby('Status')['Custo Real Total'].sum() 
+                    
                     if not dados_r.empty:
                         pcts = 100. * dados_r.values / dados_r.values.sum()
                         labels_leg = [f"{idx} ({p:.1f}%)" for idx, p in zip(dados_r.index, pcts)]
@@ -4339,7 +4344,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         ax1.legend(wedges, labels_leg, title="Status", loc="center left", bbox_to_anchor=(0.9, 0.5), fontsize=8)
                         centre_circle = plt.Circle((0,0), 0.55, fc='white')
                         ax1.add_artist(centre_circle)
-                        ax1.set_title("Conformidade (Por Qtd. de Itens)", fontsize=11, fontweight='bold', color='#003366', pad=15)
+                        # Título atualizado
+                        ax1.set_title("Conformidade Financeira (Por Custo Total R$)", fontsize=11, fontweight='bold', color='#003366', pad=15)
                         
                     df_mot_pdf = df_final[(df_final['Status'].str.contains('Consumo Excedente|Consumo Abaixo da Qtd BOM|BOM:|Alerta:')) & (df_final['Motivo'] != 'Não Informado')].copy()
                     if not df_mot_pdf.empty:
