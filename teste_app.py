@@ -4484,7 +4484,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                             style_justificativa = ParagraphStyle(
                                 'Justificativa',
                                 parent=styles['Normal'],
-                                backColor=colors.HexColor("#FFF3CD"), # Fundo amarelo claro de alerta
+                                backColor=colors.HexColor("#FFF3CD"),
                                 borderColor=colors.HexColor("#FFEEBA"),
                                 borderWidth=1,
                                 borderPadding=8,
@@ -4500,7 +4500,12 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                             
                             story.append(Paragraph(f"<b>Justificativa Técnica do Desvio (Estouro de Orçamento):</b><br/><br/>{texto_just}", style_justificativa))
                             
+                    # =========================================================
+                    # QUEBRA DE PÁGINA OBRIGATÓRIA E INCONDICIONAL
+                    # Fica totalmente alinhada à esquerda com o story.append principal
+                    # =========================================================
                     story.append(PageBreak())
+                    
                     story.append(Paragraph("2. Diagnóstico Executivo de Causa Raiz", header_style))
                     
                     # Ajustando o tamanho da figura para evitar cortes
