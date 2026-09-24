@@ -4102,18 +4102,32 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res['Impacto Financeiro (R$)'] = df_res.apply(calcular_impacto, axis=1)
                         df_res['Motivo'] = "Não Informado"
                         
+                        # --- NOVO: PROCESSAMENTO DO PRICE CALCULATION (PLANEJADO) ---
                         dict_custos_plan = {'Labor Cost': 0.0, 'Labour OH': 0.0, 'Material Cost': 0.0}
                         if file_cost:
                             df_cost_plan = pd.read_csv(file_cost, sep=';', encoding='latin1') if file_cost.name.endswith('.csv') else pd.read_excel(file_cost)
                             df_cost_plan.columns = df_cost_plan.columns.str.strip()
                             if 'Code' in df_cost_plan.columns and 'Total' in df_cost_plan.columns:
                                 df_cost_plan['Code'] = df_cost_plan['Code'].astype(str).str.strip()
+                                
                                 val_labor = df_cost_plan.loc[df_cost_plan['Code'] == 'Labor Cost', 'Total'].max()
                                 if pd.notna(val_labor): dict_custos_plan['Labor Cost'] = float(val_labor)
+                                
                                 val_oh = df_cost_plan.loc[df_cost_plan['Code'] == 'Labour OH', 'Total'].max()
                                 if pd.notna(val_oh): dict_custos_plan['Labour OH'] = float(val_oh)
-                                val_mat = df_cost_plan.loc[df_cost_plan['Code'] == 'Material Cost', 'Total'].max()
-                                if pd.notna(val_mat): dict_custos_plan['Material Cost'] = float(val_mat)
+                                
+                                # --- LÓGICA CORRIGIDA: MATERIAL COST - SUBCONTRACTING ---
+                                # 1. Busca o 'Material Cost' total
+                                val_mat_total = df_cost_plan.loc[df_cost_plan['Code'] == 'Material Cost', 'Total'].max()
+                                val_mat_total = float(val_mat_total) if pd.notna(val_mat_total) else 0.0
+                                
+                                # 2. Busca a 'SubContracting Cost' (se existir)
+                                val_subc = df_cost_plan.loc[df_cost_plan['Code'] == 'SubContracting Cost', 'Total'].max()
+                                val_subc = float(val_subc) if pd.notna(val_subc) else 0.0
+                                
+                                # 3. O Planejado de Material puro a comparar com a Fábrica
+                                dict_custos_plan['Material Cost'] = val_mat_total - val_subc
+                        # ------------------------------------------------------------
                         
                         st.session_state['res_audit_3way'] = df_res
                         st.session_state['nome_bom_base'] = file_bom_fin.name
