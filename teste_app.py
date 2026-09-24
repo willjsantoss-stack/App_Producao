@@ -4003,10 +4003,13 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_r['Quantity'] = df_r['qty_num_temp'].fillna(0) * -1
                         if 'Physical cost amount' not in df_r.columns: df_r['Physical cost amount'] = 0.0
                         if 'Financial cost amount' not in df_r.columns: df_r['Financial cost amount'] = 0.0
+                        if 'Adjustment' not in df_r.columns: df_r['Adjustment'] = 0.0 # <--- NOVO
+                        
                         df_r['Financial cost amount'] = pd.to_numeric(df_r['Financial cost amount'], errors='coerce').fillna(0) * -1
                         df_r['Physical cost amount'] = pd.to_numeric(df_r['Physical cost amount'], errors='coerce').fillna(0) * -1
+                        df_r['Adjustment'] = pd.to_numeric(df_r['Adjustment'], errors='coerce').fillna(0) * -1 # <--- NOVO
 
-                        df_real_agg = df_r.groupby('Item number').agg({'Quantity': 'sum', 'Financial cost amount': 'sum', 'Physical cost amount': 'sum'}).reset_index()
+                        df_real_agg = df_r.groupby('Item number').agg({'Quantity': 'sum', 'Financial cost amount': 'sum', 'Physical cost amount': 'sum', 'Adjustment': 'sum'}).reset_index()
 
                         lista_ign = pd.read_sql_query("SELECT codigo FROM itens_ignorados_auditoria", engine)['codigo'].astype(str).tolist()
                         df_kbn_db = pd.read_sql_query("SELECT codigo, descricao FROM itens_kanban", engine)
@@ -4039,10 +4042,16 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         df_res = df_res[~df_res['Item'].isin(lista_ign)].copy()
                         df_res = df_res[~df_res['Método'].isin(['PHANTOM', 'ASM-PH-WO', 'BUY-SC'])].copy()
 
-                        for col in ['Consumption per lot size', 'qtd_ini', 'Quantity', 'Financial cost amount', 'Physical cost amount', 'Cost price per unit']:
+                        for col in ['Consumption per lot size', 'qtd_ini', 'Quantity', 'Financial cost amount', 'Physical cost amount', 'Adjustment', 'Cost price per unit']:
                             if col in df_res.columns: df_res[col] = pd.to_numeric(df_res[col], errors='coerce').fillna(0).astype(float)
 
-                        df_res['Custo Real Total'] = df_res.apply(lambda r: abs(r['Financial cost amount'] if r['Financial cost amount'] != 0 else r['Physical cost amount']), axis=1)
+                        # --- NOVA LÓGICA DE CUSTO REAL: Considerar o Fechamento de Estoque (Ajuste do D365) ---
+                        def calc_true_cost(r):
+                            total_financeiro = r['Financial cost amount'] + r['Adjustment']
+                            # Se o financeiro+ajuste for zero, usa o custo físico. Caso contrário, usa o financeiro ajustado.
+                            return abs(total_financeiro) if total_financeiro != 0 else abs(r['Physical cost amount'])
+                            
+                        df_res['Custo Real Total'] = df_res.apply(calc_true_cost, axis=1)
                         
                         def calcular_custo_unitario(r):
                             if r['Quantity'] != 0 and r['Custo Real Total'] != 0:
@@ -4116,17 +4125,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                                 val_oh = df_cost_plan.loc[df_cost_plan['Code'] == 'Labour OH', 'Total'].max()
                                 if pd.notna(val_oh): dict_custos_plan['Labour OH'] = float(val_oh)
                                 
-                                # --- LÓGICA CORRIGIDA: MATERIAL COST - SUBCONTRACTING ---
-                                # 1. Busca o 'Material Cost' total
-                                val_mat_total = df_cost_plan.loc[df_cost_plan['Code'] == 'Material Cost', 'Total'].max()
-                                val_mat_total = float(val_mat_total) if pd.notna(val_mat_total) else 0.0
-                                
-                                # 2. Busca a 'SubContracting Cost' (se existir)
-                                val_subc = df_cost_plan.loc[df_cost_plan['Code'] == 'SubContracting Cost', 'Total'].max()
-                                val_subc = float(val_subc) if pd.notna(val_subc) else 0.0
-                                
-                                # 3. O Planejado de Material puro a comparar com a Fábrica
-                                dict_custos_plan['Material Cost'] = val_mat_total - val_subc
+                                # --- LÓGICA OTIMIZADA: APENAS RAW MATERIAL COST ---
+                                # Foca diretamente na matéria-prima bruta, ignorando Sub-assembly e SubContracting
+                                val_raw = df_cost_plan.loc[df_cost_plan['Code'] == 'Raw Material Cost', 'Total'].max()
+                                dict_custos_plan['Material Cost'] = float(val_raw) if pd.notna(val_raw) else 0.0
                         # ------------------------------------------------------------
                         
                         st.session_state['res_audit_3way'] = df_res
