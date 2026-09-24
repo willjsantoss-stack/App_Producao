@@ -4151,51 +4151,40 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         horas_totais = qtd_oh / t_hh if t_hh > 0 else 0
 
         # =====================================================================
-        # INÍCIO DO CÓDIGO DO PASSO 3 (ATUALIZADO PARA PUXAR HORAS REAIS)
+        # INÍCIO DO CÓDIGO DO PASSO 3 (LÓGICA CORRIGIDA: BOM vs ERP)
         # =====================================================================
         custos_plan = st.session_state.get('custos_plan_d365', {'Labor Cost': 0.0, 'Labour OH': 0.0, 'Material Cost': 0.0})
-        so_atual = st.session_state.get('so_auditoria_atual', 'N/A')
         
-        # 1. Busca das Horas REAIS no banco de dados da fábrica
-        horas_reais_bd = 0.0
-        if so_atual != 'N/A':
-            df_he_so = pd.read_sql_query("SELECT SUM(horas_normais + he_50 + he_100) as total FROM apontamentos WHERE so=%(so)s AND tipo IN ('Produção Normal', 'Retrabalho', 'Parada')", engine, params={"so": so_atual})
-            if not df_he_so.empty and pd.notna(df_he_so['total'].iloc[0]):
-                horas_reais_bd = float(df_he_so['total'].iloc[0])
+        # 1. Custo Realizado (Fechamento do ERP - Tabela de Custo WO)
+        real_labor = custos_plan['Labor Cost']
+        real_oh = custos_plan['Labour OH']
+        real_mat = custos_plan['Material Cost']
         
-        # 2. Realizado (Matemática Pura com a Realidade)
-        real_labor = horas_reais_bd * t_hh
-        real_oh = real_labor * t_oh
-        real_mat = custo_total_mat
+        # 2. Custo Planejado (Calculado pelo App via BOM e Consumo Industrial)
+        plan_labor = horas_totais * t_hh
+        plan_oh = valor_oh
+        plan_mat = custo_total_mat
         
-        # 3. Planejado (Price Calculation D365)
-        plan_labor = custos_plan['Labor Cost']
-        plan_oh = custos_plan['Labour OH']
-        plan_mat = custos_plan['Material Cost']
-        
-        # 4. Deltas (Se > 0 é Prejuízo/Estouro, Se < 0 é Economia)
+        # 3. Cálculo de Variância (Realizado - Planejado)
+        # Positivo = Gastou a mais (Prejuízo) | Negativo = Gastou a menos (Economia)
         delta_labor = real_labor - plan_labor
         delta_oh = real_oh - plan_oh
         delta_mat = real_mat - plan_mat
         
-        st.markdown("### ⚖️ Auditoria de Variância (Planejado ERP vs Realizado App)")
-        if horas_reais_bd == 0:
-            st.warning(f"⚠️ Nenhuma hora de produção foi encontrada no banco de dados para a SO '{so_atual}'. O valor de Mão de Obra Realizado está zerado.")
+        st.markdown("### ⚖️ Auditoria de Variância (Fechamento ERP vs Planejado BOM)")
         
         col_v1, col_v2, col_v3 = st.columns(3)
+        col_v1.metric("Mão de Obra (Labor Cost)", f"R$ {real_labor:,.2f}", f"Desvio: R$ {delta_labor:,.2f}", delta_color="inverse")
+        col_v2.metric("Indiretos (Labour OH)", f"R$ {real_oh:,.2f}", f"Desvio: R$ {delta_oh:,.2f}", delta_color="inverse")
+        col_v3.metric("Total Material (Fechamento)", f"R$ {real_mat:,.2f}", f"Desvio: R$ {delta_mat:,.2f}", delta_color="inverse")
         
-        # Correção visual: passamos apenas o valor numérico para a métrica não se perder com as setas
-        col_v1.metric(f"Mão de Obra Real ({horas_reais_bd:.1f}h)", f"R$ {real_labor:,.2f}", float(f"{delta_labor:.2f}"), delta_color="inverse")
-        col_v2.metric("Indiretos (Labour OH)", f"R$ {real_oh:,.2f}", float(f"{delta_oh:.2f}"), delta_color="inverse")
-        col_v3.metric("Total Material", f"R$ {real_mat:,.2f}", float(f"{delta_mat:.2f}"), delta_color="inverse")
-        
-        # 5. Caixa de Justificativa se houver estouro de orçamento
+        # 4. Caixa de Justificativa se houver estouro de orçamento
         justificativa_desvio = "Sem desvios significativos no orçamento global."
         tem_estouro = delta_labor > 0 or delta_mat > 0 or delta_oh > 0
         
         if tem_estouro:
-            st.error("⚠️ **Alerta Financeiro:** Foi detetado consumo excedente (horas ou materiais) em relação à Tabela de Custo do ERP. É obrigatório justificar o desvio.")
-            justificativa_desvio = st.text_area("Justificativa Técnica para Estouro de Orçamento (Labor/Material):", value=st.session_state.get('just_variancia', ''))
+            st.error("⚠️ **Alerta Financeiro:** O Custo Realizado no ERP superou o Planejado na BOM (Estouro de Orçamento). É obrigatório justificar o desvio abaixo.")
+            justificativa_desvio = st.text_area("Justificativa Técnica para o Estouro de Orçamento (Labor/Material/OH):", value=st.session_state.get('just_variancia', ''))
             st.session_state['just_variancia'] = justificativa_desvio
 
         st.markdown("---")
@@ -4453,7 +4442,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         story.append(Paragraph("1.1 Análise de Variância Orçamental (Price Calculation)", header_style))
                         
                         data_var = [
-                            ["Categoria", "Planejado (D365)", "Realizado (BOM/Fábrica)", "Desvio (R$)"],
+                            ["Categoria", "Planejado (BOM App)", "Realizado (D365 ERP)", "Desvio (R$)"],
                             ["Labor Cost", f"R$ {plan_labor:,.2f}", f"R$ {real_labor:,.2f}", f"R$ {delta_labor:+,.2f}"],
                             ["Labour OH", f"R$ {plan_oh:,.2f}", f"R$ {real_oh:,.2f}", f"R$ {delta_oh:+,.2f}"],
                             ["Material Total", f"R$ {plan_mat:,.2f}", f"R$ {real_mat:,.2f}", f"R$ {delta_mat:+,.2f}"]
