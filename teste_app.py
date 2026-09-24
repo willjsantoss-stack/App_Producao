@@ -4380,33 +4380,37 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                 proj_salvar = st.session_state.get('proj_auditoria_atual', 'N/A')
                 texto_justificativa = st.session_state.get('just_variancia', '')
 
-                # 1. PREPARAÇÃO DO BANCO DE DADOS (Criação de colunas e da nova tabela Macro)
-                try: 
-                    cursor.execute("ALTER TABLE auditoria_3vias_historico ADD COLUMN IF NOT EXISTS motivo TEXT")
-                    cursor.execute("ALTER TABLE auditoria_3vias_historico ADD COLUMN IF NOT EXISTS so TEXT")
-                    cursor.execute("ALTER TABLE auditoria_3vias_historico ADD COLUMN IF NOT EXISTS nome_projeto TEXT")
-                    
-                    # Cria a tabela Macro se não existir
-                    cursor.execute('''
-                        CREATE TABLE IF NOT EXISTS auditoria_financeira_macro (
-                            id SERIAL PRIMARY KEY,
-                            data_auditoria TIMESTAMP,
-                            so TEXT,
-                            nome_projeto TEXT,
-                            plan_labor NUMERIC,
-                            real_labor NUMERIC,
-                            delta_labor NUMERIC,
-                            plan_oh NUMERIC,
-                            real_oh NUMERIC,
-                            delta_oh NUMERIC,
-                            plan_mat NUMERIC,
-                            real_mat NUMERIC,
-                            delta_mat NUMERIC,
-                            justificativa TEXT
-                        )
-                    ''')
-                except: pass
+                # 1. PREPARAÇÃO DO BANCO DE DADOS (Com proteção de Transação)
+                conn.rollback() # Limpa qualquer erro prévio pendente no banco
+                
+                # Cria a tabela Macro se não existir
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS auditoria_financeira_macro (
+                        id SERIAL PRIMARY KEY,
+                        data_auditoria TIMESTAMP,
+                        so TEXT,
+                        nome_projeto TEXT,
+                        plan_labor NUMERIC,
+                        real_labor NUMERIC,
+                        delta_labor NUMERIC,
+                        plan_oh NUMERIC,
+                        real_oh NUMERIC,
+                        delta_oh NUMERIC,
+                        plan_mat NUMERIC,
+                        real_mat NUMERIC,
+                        delta_mat NUMERIC,
+                        justificativa TEXT
+                    )
+                ''')
                 conn.commit()
+
+                # Adiciona colunas novas com tratamento individual para não travar o banco
+                for col_name in ['motivo', 'so', 'nome_projeto']:
+                    try: 
+                        cursor.execute(f"ALTER TABLE auditoria_3vias_historico ADD COLUMN {col_name} TEXT")
+                        conn.commit()
+                    except:
+                        conn.rollback() # Se a coluna já existir, ele cancela o erro e segue a vida
                 
                 # 2. GRAVAÇÃO MACRO (Totais Financeiros e Justificativa)
                 cursor.execute("""
@@ -4436,7 +4440,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                 
                 conn.commit()
                 st.success(f"✔️ Auditoria Completa da SO {so_salvar} gravada com sucesso! (Resumo Financeiro + {len(df_gravar)} itens com desvio)")
-
+                
         if col_b2.button("📄 Gerar Relatório Executivo (PDF)", use_container_width=True):
             with st.spinner("Desenhando documento executivo..."):
                 try:
