@@ -4216,7 +4216,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
         qtd_sem_custo = len(itens_sem_custo)
         
         if qtd_sem_custo > 0:
-            st.warning(f"⚠️ **Alerta de Precificação:** Detectamos {qtd_sem_custo} item(ns) consumido(s) pela fábrica, mas que estão com Custo Unitário R$ 0,00 no sistema (ERP/BOM).")
+            # Extrai a lista de itens com problema e junta com vírgulas
+            lista_itens_zero = ", ".join(itens_sem_custo['Item'].astype(str).tolist())
+            
+            st.warning(f"⚠️ **Alerta de Precificação:** Detectamos {qtd_sem_custo} item(ns) consumido(s) pela fábrica com Custo Unitário R$ 0,00 no sistema (ERP/BOM).\n\n**Itens afetados:** `{lista_itens_zero}`")
 
         # --- MAPA DE CORES UNIVERSAL (TELA E PDF) ---
         mapa_cores = {
@@ -4487,8 +4490,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
 
                     story.append(Paragraph("2. Diagnóstico Executivo de Causa Raiz", header_style))
                     
-                    fig_pdf = plt.figure(figsize=(10, 8), facecolor='white')
-                    gs = fig_pdf.add_gridspec(2, 2, height_ratios=[1, 1.2])
+                    # Ajustando o tamanho da figura para evitar cortes
+                    fig_pdf = plt.figure(figsize=(10, 8.5), facecolor='white')
+                    gs = fig_pdf.add_gridspec(2, 2, height_ratios=[1, 1.2], hspace=0.3)
                     ax1 = fig_pdf.add_subplot(gs[0, 0]) # Pizza Esquerda (Quantitativo)
                     ax2 = fig_pdf.add_subplot(gs[0, 1]) # Pizza Direita (Financeiro)
                     ax3 = fig_pdf.add_subplot(gs[1, :]) # Barras Em Baixo (Causa Raiz)
@@ -4502,11 +4506,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         
                         wedges_q, texts_q = ax1.pie(dados_q.values, startangle=140, colors=cores_pie_q)
                         
-                        # Legenda e formatação
-                        ax1.legend(wedges_q, labels_leg_q, loc="center left", bbox_to_anchor=(0.9, 0.5), fontsize=7)
+                        ax1.legend(wedges_q, labels_leg_q, loc="center left", bbox_to_anchor=(0.85, 0.5), fontsize=7)
                         centre_circle_q = plt.Circle((0,0), 0.55, fc='white')
                         ax1.add_artist(centre_circle_q)
-                        ax1.set_title("Conformidade Industrial (Por Qtd. Itens)", fontsize=10, fontweight='bold', color='#003366', pad=10)
+                        ax1.set_title("Conformidade Industrial (Qtd. Itens)", fontsize=10, fontweight='bold', color='#003366', pad=15)
 
                     # --- GRÁFICO 2 (DIREITA): CONFORMIDADE FINANCEIRA (Custo R$) ---
                     dados_f = df_graficos.groupby('Status')['Custo Real Total'].sum()
@@ -4517,10 +4520,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         
                         wedges_f, texts_f = ax2.pie(dados_f.values, startangle=140, colors=cores_pie_f)
                         
-                        ax2.legend(wedges_f, labels_leg_f, loc="center left", bbox_to_anchor=(0.9, 0.5), fontsize=7)
+                        ax2.legend(wedges_f, labels_leg_f, loc="center left", bbox_to_anchor=(0.85, 0.5), fontsize=7)
                         centre_circle_f = plt.Circle((0,0), 0.55, fc='white')
                         ax2.add_artist(centre_circle_f)
-                        ax2.set_title("Conformidade Financeira (Por Custo R$)", fontsize=10, fontweight='bold', color='#003366', pad=10)
+                        ax2.set_title("Conformidade Financeira (Custo R$)", fontsize=10, fontweight='bold', color='#003366', pad=15)
                         
                     # --- GRÁFICO 3 (EM BAIXO): IMPACTO POR CAUSA RAIZ ---
                     df_mot_pdf = df_final[(df_final['Status'].str.contains('Consumo Excedente|Consumo Abaixo da Qtd BOM|BOM:|Alerta:')) & (df_final['Motivo'] != 'Não Informado')].copy()
