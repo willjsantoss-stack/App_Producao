@@ -2524,327 +2524,318 @@ elif menu_selecionado == "🗂️ Kanban & Timeline":
     else:
         opcoes_projetos = ["- Nenhum projeto ativo -"]
 
-    # <--- APENAS DUAS ABAS AGORA
-    tab_materiais, tab_timeline = st.tabs(["📦 Gestão de Materiais", "📈 Linha do Tempo (Timeline)"])
+    # --- CRIAÇÃO DAS TABELAS DE SOBRA AUTOMÁTICA (Fora das Abas) ---
+    try:
+        cursor.execute('CREATE TABLE IF NOT EXISTS destinacoes_sobra (destinacao TEXT PRIMARY KEY)')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS materiais_sobra (
+                id SERIAL PRIMARY KEY,
+                so TEXT,
+                codigo TEXT,
+                descricao TEXT,
+                quantidade INTEGER,
+                valor NUMERIC,
+                destinacao TEXT,
+                data_registro TIMESTAMP
+            )
+        ''')
+        # Popula algumas destinações iniciais se estiver vazio
+        cursor.execute("SELECT COUNT(*) FROM destinacoes_sobra")
+        if cursor.fetchone()[0] == 0:
+            for d in ["Devolução Almoxarifado", "Sucata / Descarte", "Ajuste de BOM (Engenharia)"]:
+                cursor.execute("INSERT INTO destinacoes_sobra (destinacao) VALUES (%s)", (d,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    # ----------------------------------------------
+
+    # <--- CRIANDO AS 3 ABAS PRINCIPAIS DIRETAMENTE
+    tab_faltas, tab_sobras, tab_timeline = st.tabs(["⚠️ Controle de Faltas", "♻️ Apontamento de Sobras", "📈 Linha do Tempo (Timeline)"])
 
     # ==========================================
-    # GESTÃO DE MATERIAIS (FALTAS E SOBRAS)
+    # 1. ABA DE FALTAS DE MATERIAIS
     # ==========================================
-    with tab_materiais:
-        
-        # --- CRIAÇÃO DAS TABELAS DE SOBRA AUTOMÁTICA ---
-        try:
-            cursor.execute('CREATE TABLE IF NOT EXISTS destinacoes_sobra (destinacao TEXT PRIMARY KEY)')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS materiais_sobra (
-                    id SERIAL PRIMARY KEY,
-                    so TEXT,
-                    codigo TEXT,
-                    descricao TEXT,
-                    quantidade INTEGER,
-                    valor NUMERIC,
-                    destinacao TEXT,
-                    data_registro TIMESTAMP
-                )
-            ''')
-            # Popula algumas destinações iniciais se estiver vazio
-            cursor.execute("SELECT COUNT(*) FROM destinacoes_sobra")
-            if cursor.fetchone()[0] == 0:
-                for d in ["Devolução Almoxarifado", "Sucata / Descarte", "Ajuste de BOM (Engenharia)"]:
-                    cursor.execute("INSERT INTO destinacoes_sobra (destinacao) VALUES (%s)", (d,))
-            conn.commit()
-        except Exception:
-            conn.rollback()
-        # ----------------------------------------------
-
-        st.markdown("### 📦 Controle de Materiais: Faltas e Sobras")
-        
-        tab_faltas, tab_sobras = st.tabs(["⚠️ Controle de Faltas", "♻️ Apontamento de Sobras"])
-        
-        # ---------------------------------------------------------
-        # SUB-ABA 1: FALTAS (O código atual que já funciona perfeitamente)
-        # ---------------------------------------------------------
-        with tab_faltas:
-            st.write("Registre os materiais que travam a produção. A data de recebimento formará um marco na linha do tempo do projeto.")
+    with tab_faltas:
+        st.write("Registre os materiais que travam a produção. A data de recebimento formará um marco na linha do tempo do projeto.")
             
-            col_mat_esq, col_mat_dir = st.columns([1, 2.5])
+        col_mat_esq, col_mat_dir = st.columns([1, 2.5])
             
-            with col_mat_esq:
-                with st.container(border=True):
-                    st.markdown("#### ➕ Apontar Nova Falta")
+        with col_mat_esq:
+            with st.container(border=True):
+                st.markdown("#### ➕ Apontar Nova Falta")
                     
-                    with st.form("form_novo_material", clear_on_submit=True):
-                        projeto_selecionado = st.selectbox("Sales Order (SO) / Cliente*", opcoes_projetos)
-                        cod_mat = st.text_input("Código do Material*")
-                        desc_mat = st.text_area("Descrição do Material*")
-                        qtd_mat = st.number_input("Quantidade*", min_value=1, step=1)
-                        dt_prev = st.date_input("Data Prevista de Chegada (Opcional)", value=None, format="DD/MM/YYYY")
+                with st.form("form_novo_material", clear_on_submit=True):
+                    projeto_selecionado = st.selectbox("Sales Order (SO) / Cliente*", opcoes_projetos)
+                    cod_mat = st.text_input("Código do Material*")
+                    desc_mat = st.text_area("Descrição do Material*")
+                    qtd_mat = st.number_input("Quantidade*", min_value=1, step=1)
+                    dt_prev = st.date_input("Data Prevista de Chegada (Opcional)", value=None, format="DD/MM/YYYY")
                         
-                        submit_mat = st.form_submit_button("💾 Registrar Falta", type="primary", use_container_width=True)
+                    submit_mat = st.form_submit_button("💾 Registrar Falta", type="primary", use_container_width=True)
                         
-                        if submit_mat:
-                            if not cod_mat or not desc_mat or qtd_mat <= 0 or projeto_selecionado == "- Nenhum projeto ativo -":
-                                st.error("❌ Projeto, Código, Descrição e Quantidade são obrigatórios!")
-                            else:
-                                so_extraida = projeto_selecionado.split(" - ")[0].strip()
-                                dt_prev_str = dt_prev.strftime('%Y-%m-%d') if dt_prev else None
+                    if submit_mat:
+                        if not cod_mat or not desc_mat or qtd_mat <= 0 or projeto_selecionado == "- Nenhum projeto ativo -":
+                            st.error("❌ Projeto, Código, Descrição e Quantidade são obrigatórios!")
+                        else:
+                            so_extraida = projeto_selecionado.split(" - ")[0].strip()
+                            dt_prev_str = dt_prev.strftime('%Y-%m-%d') if dt_prev else None
                                 
-                                cursor.execute("""
-                                    INSERT INTO kanban_materiais (wo, codigo, descricao, quantidade, data_apontamento, data_prevista_chegada, status)
-                                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, 'Faltante')
-                                """, (so_extraida, cod_mat.strip(), desc_mat.strip(), qtd_mat, dt_prev_str))
-                                conn.commit()
-                                st.success("✔️ Material registrado como faltante na SO!")
-                                time_sys.sleep(1.5)
-                                st.rerun()
+                            cursor.execute("""
+                                INSERT INTO kanban_materiais (wo, codigo, descricao, quantidade, data_apontamento, data_prevista_chegada, status)
+                                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, 'Faltante')
+                            """, (so_extraida, cod_mat.strip(), desc_mat.strip(), qtd_mat, dt_prev_str))
+                            conn.commit()
+                            st.success("✔️ Material registrado como faltante na SO!")
+                            time_sys.sleep(1.5)
+                            st.rerun()
 
-            with col_mat_dir:
-                st.markdown("#### ⏳ Materiais Aguardando Recebimento")
+        with col_mat_dir:
+            st.markdown("#### ⏳ Materiais Aguardando Recebimento")
                 
-                df_mats = pd.read_sql_query("""
-                    SELECT m.id, m.wo as so_vinculada, m.codigo, m.descricao, m.quantidade, m.data_prevista_chegada,
-                           p.customer as so_customer
-                    FROM kanban_materiais m
-                    LEFT JOIN (SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL) p ON m.wo = p.so
-                    WHERE m.status = 'Faltante'
-                """, engine)
-                
-                if not df_mats.empty:
-                    sos_faltantes = df_mats['so_vinculada'].unique()
-                    num_cols_per_row = 3
-                    
-                    for i in range(0, len(sos_faltantes), num_cols_per_row):
-                        cols_projetos = st.columns(num_cols_per_row)
-                        for j in range(num_cols_per_row):
-                            if i + j < len(sos_faltantes):
-                                so_falta = sos_faltantes[i + j]
-                                df_mats_so = df_mats[df_mats['so_vinculada'] == so_falta]
-                                
-                                cliente_nome = df_mats_so['so_customer'].iloc[0] if pd.notna(df_mats_so['so_customer'].iloc[0]) else ""
-                                if cliente_nome:
-                                    cliente_abrev = (cliente_nome[:20] + '...') if len(cliente_nome) > 20 else cliente_nome
-                                    titulo_cabecalho = f"SO: {so_falta}<br><span style='font-size: 11px; font-weight: normal;'>{cliente_abrev}</span>"
-                                else:
-                                    titulo_cabecalho = f"SO: {so_falta}"
-                                
-                                with cols_projetos[j]:
-                                    st.markdown(f"<div style='text-align: center; background-color: #f8d7da; color: #721c24; padding: 6px; border-radius: 5px; margin-bottom: 10px; font-weight: bold; border: 1px solid #f5c6cb;'>{titulo_cabecalho}</div>", unsafe_allow_html=True)
-                                    
-                                    for _, row in df_mats_so.iterrows():
-                                        with st.container(border=True):
-                                            st.markdown(f"**Cód:** `{row['codigo']}`")
-                                            st.markdown(f"<span style='font-size: 14px;'>{row['descricao']}</span>", unsafe_allow_html=True)
-                                            st.write(f"**Qtd:** {row['quantidade']} un")
-                                            prev = pd.to_datetime(row['data_prevista_chegada']).strftime('%d/%m/%Y') if pd.notna(row['data_prevista_chegada']) else "Não informada"
-                                            st.caption(f"📅 *Previsão: {prev}*")
-                                            
-                                            c_b1, c_b2 = st.columns(2)
-                                            if c_b1.button("📦 Baixa", key=f"rec_mat_{row['id']}", type="primary", use_container_width=True):
-                                                cursor.execute("UPDATE kanban_materiais SET status = 'Recebido', data_recebimento = CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo' WHERE id = %s", (row['id'],))
-                                                conn.commit()
-                                                st.rerun()
-                                                
-                                            if c_b2.button("🗑️ Excluir", key=f"del_mat_{row['id']}", use_container_width=True):
-                                                cursor.execute("DELETE FROM kanban_materiais WHERE id = %s", (row['id'],))
-                                                conn.commit()
-                                                st.rerun()
-                else:
-                    st.info("🎉 Nenhum material faltante no momento.")
-
-        # ---------------------------------------------------------
-        # SUB-ABA 2: SOBRAS (O Novo Relatório de Controle de Custo)
-        # ---------------------------------------------------------
-        with tab_sobras:
-            st.write("Registre os materiais excedentes durante a montagem para rastreio de custo e reavaliação de engenharia.")
-            
-            df_sobras = pd.read_sql_query("""
-                SELECT s.id, s.so, s.codigo, s.descricao, s.quantidade, s.valor, s.destinacao, s.data_registro,
-                       p.customer as so_customer
-                FROM materiais_sobra s
-                LEFT JOIN (SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL) p ON s.so = p.so
-                ORDER BY s.data_registro DESC
+            df_mats = pd.read_sql_query("""
+                SELECT m.id, m.wo as so_vinculada, m.codigo, m.descricao, m.quantidade, m.data_prevista_chegada,
+                        p.customer as so_customer
+                FROM kanban_materiais m
+                LEFT JOIN (SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL) p ON m.wo = p.so
+                WHERE m.status = 'Faltante'
             """, engine)
-            
-            col_sob_esq, col_sob_dir = st.columns([1, 2.5])
-            
-            with col_sob_esq:
-                with st.container(border=True):
-                    st.markdown("#### ➕ Apontar Sobra")
+                
+            if not df_mats.empty:
+                sos_faltantes = df_mats['so_vinculada'].unique()
+                num_cols_per_row = 3
                     
-                    df_destinacoes = pd.read_sql_query("SELECT destinacao FROM destinacoes_sobra", engine)
-                    lista_destinacoes = df_destinacoes['destinacao'].tolist() if not df_destinacoes.empty else ["- Cadastre na Manutenção -"]
-                    
-                    with st.form("form_nova_sobra", clear_on_submit=True):
-                        projeto_sel_sobra = st.selectbox("Sales Order (SO) / Cliente*", opcoes_projetos)
-                        cod_sobra = st.text_input("Código do Material*")
-                        desc_sobra = st.text_area("Descrição do Material*")
-                        
-                        c_qtd, c_val = st.columns(2)
-                        qtd_sobra = c_qtd.number_input("Quantidade*", min_value=1, step=1)
-                        # ATUALIZADO: "Valor Unitário" ao invés de "Total"
-                        val_sobra = c_val.number_input("Valor Unitário (R$)*", min_value=0.01, step=10.0)
-                        
-                        dest_sobra = st.selectbox("Destinação / Justificativa*", ["- Selecione -"] + lista_destinacoes)
-                        
-                        submit_sobra = st.form_submit_button("💾 Registrar Sobra", type="primary", use_container_width=True)
-                        
-                        if submit_sobra:
-                            if not cod_sobra or not desc_sobra or qtd_sobra <= 0 or val_sobra <= 0 or projeto_sel_sobra == "- Nenhum projeto ativo -" or dest_sobra == "- Selecione -":
-                                st.error("❌ Preencha todos os campos obrigatórios (Quantidade e Valor devem ser maiores que zero)!")
+                for i in range(0, len(sos_faltantes), num_cols_per_row):
+                    cols_projetos = st.columns(num_cols_per_row)
+                    for j in range(num_cols_per_row):
+                        if i + j < len(sos_faltantes):
+                            so_falta = sos_faltantes[i + j]
+                            df_mats_so = df_mats[df_mats['so_vinculada'] == so_falta]
+                                
+                            cliente_nome = df_mats_so['so_customer'].iloc[0] if pd.notna(df_mats_so['so_customer'].iloc[0]) else ""
+                            if cliente_nome:
+                                cliente_abrev = (cliente_nome[:20] + '...') if len(cliente_nome) > 20 else cliente_nome
+                                titulo_cabecalho = f"SO: {so_falta}<br><span style='font-size: 11px; font-weight: normal;'>{cliente_abrev}</span>"
                             else:
-                                so_ext_sobra = projeto_sel_sobra.split(" - ")[0].strip()
+                                titulo_cabecalho = f"SO: {so_falta}"
                                 
-                                cursor.execute("""
-                                    INSERT INTO materiais_sobra (so, codigo, descricao, quantidade, valor, destinacao, data_registro)
-                                    VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')
-                                """, (so_ext_sobra, cod_sobra.strip(), desc_sobra.strip(), qtd_sobra, val_sobra, dest_sobra))
-                                conn.commit()
-                                st.success("✔️ Sobra de material registrada com sucesso!")
-                                time_sys.sleep(1.5)
-                                st.rerun()
-
-                st.write("")
-                with st.expander("✏️ Editar ou Excluir Apontamento de Sobra"):
-                    if not df_sobras.empty:
-                        df_sos_com_sobra = df_sobras[['so', 'so_customer']].drop_duplicates()
-                        lista_sos_edit = ["- Selecione o Projeto -"] + sorted([f"{r['so']} - {r['so_customer'] if pd.notna(r['so_customer']) else 'Sem Cliente'}" for _, r in df_sos_com_sobra.iterrows()])
-                        
-                        so_edit_sel = st.selectbox("1. Selecione o Projeto (SO):", lista_sos_edit, key="so_edit_sobra_sel")
-                        
-                        if so_edit_sel != "- Selecione o Projeto -":
-                            so_clean_edit = so_edit_sel.split(" - ")[0].strip()
-                            df_sobras_filtro = df_sobras[df_sobras['so'] == so_clean_edit]
-                            
-                            sobra_edit_list = ["- Selecione o Material -"] + [f"ID {r['id']} | Cód: {r['codigo']} - {r['descricao'][:30]}..." for _, r in df_sobras_filtro.iterrows()]
-                            sobra_selecionada = st.selectbox("2. Selecione o registro:", sobra_edit_list, key="item_edit_sobra_sel")
-                            
-                            if sobra_selecionada != "- Selecione o Material -":
-                                id_edit = sobra_selecionada.split(" | ")[0].replace("ID ", "")
-                                row_sobra = df_sobras_filtro[df_sobras_filtro['id'].astype(str) == id_edit].iloc[0]
-                                
-                                st.write("**3. Altere os dados abaixo:**")
-                                
-                                c_e1, c_e2 = st.columns(2)
-                                edit_cod = c_e1.text_input("Código do Material", value=row_sobra['codigo'], key="ed_cod_sobra")
-                                edit_qtd = c_e2.number_input("Quantidade", value=int(row_sobra['quantidade']), min_value=1, step=1, key="ed_qtd_sobra")
-                                
-                                edit_desc = st.text_area("Descrição", value=row_sobra['descricao'], key="ed_desc_sobra")
-                                
-                                df_dest_edit = pd.read_sql_query("SELECT destinacao FROM destinacoes_sobra", engine)
-                                list_dest_edit = df_dest_edit['destinacao'].tolist() if not df_dest_edit.empty else ["- Vazio -"]
-                                
-                                try:
-                                    idx_dest = list_dest_edit.index(row_sobra['destinacao'])
-                                except ValueError:
-                                    idx_dest = 0
+                            with cols_projetos[j]:
+                                st.markdown(f"<div style='text-align: center; background-color: #f8d7da; color: #721c24; padding: 6px; border-radius: 5px; margin-bottom: 10px; font-weight: bold; border: 1px solid #f5c6cb;'>{titulo_cabecalho}</div>", unsafe_allow_html=True)
                                     
-                                c_e3, c_e4 = st.columns(2)
-                                # ATUALIZADO: "Valor Unitário"
-                                edit_val = c_e3.number_input("Valor Unitário (R$)", value=float(row_sobra['valor']), min_value=0.0, step=10.0, key="ed_val_sobra")
-                                edit_dest = c_e4.selectbox("Destinação", list_dest_edit, index=idx_dest, key="ed_dest_sobra")
+                                for _, row in df_mats_so.iterrows():
+                                    with st.container(border=True):
+                                        st.markdown(f"**Cód:** `{row['codigo']}`")
+                                        st.markdown(f"<span style='font-size: 14px;'>{row['descricao']}</span>", unsafe_allow_html=True)
+                                        st.write(f"**Qtd:** {row['quantidade']} un")
+                                        prev = pd.to_datetime(row['data_prevista_chegada']).strftime('%d/%m/%Y') if pd.notna(row['data_prevista_chegada']) else "Não informada"
+                                        st.caption(f"📅 *Previsão: {prev}*")
+                                            
+                                        c_b1, c_b2 = st.columns(2)
+                                        if c_b1.button("📦 Baixa", key=f"rec_mat_{row['id']}", type="primary", use_container_width=True):
+                                            cursor.execute("UPDATE kanban_materiais SET status = 'Recebido', data_recebimento = CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo' WHERE id = %s", (row['id'],))
+                                            conn.commit()
+                                            st.rerun()
+                                                
+                                        if c_b2.button("🗑️ Excluir", key=f"del_mat_{row['id']}", use_container_width=True):
+                                            cursor.execute("DELETE FROM kanban_materiais WHERE id = %s", (row['id'],))
+                                            conn.commit()
+                                            st.rerun()
+            else:
+                st.info("🎉 Nenhum material faltante no momento.")
+
+    # ---------------------------------------------------------
+    # SUB-ABA 2: SOBRAS (O Novo Relatório de Controle de Custo)
+    # ---------------------------------------------------------
+    with tab_sobras:
+        st.write("Registre os materiais excedentes durante a montagem para rastreio de custo e reavaliação de engenharia.")
+        
+        df_sobras = pd.read_sql_query("""
+            SELECT s.id, s.so, s.codigo, s.descricao, s.quantidade, s.valor, s.destinacao, s.data_registro,
+                    p.customer as so_customer
+            FROM materiais_sobra s
+            LEFT JOIN (SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL) p ON s.so = p.so
+            ORDER BY s.data_registro DESC
+        """, engine)
+        
+        col_sob_esq, col_sob_dir = st.columns([1, 2.5])
+        
+        with col_sob_esq:
+            with st.container(border=True):
+                st.markdown("#### ➕ Apontar Sobra")
+                
+                df_destinacoes = pd.read_sql_query("SELECT destinacao FROM destinacoes_sobra", engine)
+                lista_destinacoes = df_destinacoes['destinacao'].tolist() if not df_destinacoes.empty else ["- Cadastre na Manutenção -"]
+                
+                with st.form("form_nova_sobra", clear_on_submit=True):
+                    projeto_sel_sobra = st.selectbox("Sales Order (SO) / Cliente*", opcoes_projetos)
+                    cod_sobra = st.text_input("Código do Material*")
+                    desc_sobra = st.text_area("Descrição do Material*")
+                    
+                    c_qtd, c_val = st.columns(2)
+                    qtd_sobra = c_qtd.number_input("Quantidade*", min_value=1, step=1)
+                    # ATUALIZADO: "Valor Unitário" ao invés de "Total"
+                    val_sobra = c_val.number_input("Valor Unitário (R$)*", min_value=0.01, step=10.0)
+                    
+                    dest_sobra = st.selectbox("Destinação / Justificativa*", ["- Selecione -"] + lista_destinacoes)
+                    
+                    submit_sobra = st.form_submit_button("💾 Registrar Sobra", type="primary", use_container_width=True)
+                    
+                    if submit_sobra:
+                        if not cod_sobra or not desc_sobra or qtd_sobra <= 0 or val_sobra <= 0 or projeto_sel_sobra == "- Nenhum projeto ativo -" or dest_sobra == "- Selecione -":
+                            st.error("❌ Preencha todos os campos obrigatórios (Quantidade e Valor devem ser maiores que zero)!")
+                        else:
+                            so_ext_sobra = projeto_sel_sobra.split(" - ")[0].strip()
+                            
+                            cursor.execute("""
+                                INSERT INTO materiais_sobra (so, codigo, descricao, quantidade, valor, destinacao, data_registro)
+                                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')
+                            """, (so_ext_sobra, cod_sobra.strip(), desc_sobra.strip(), qtd_sobra, val_sobra, dest_sobra))
+                            conn.commit()
+                            st.success("✔️ Sobra de material registrada com sucesso!")
+                            time_sys.sleep(1.5)
+                            st.rerun()
+
+            st.write("")
+            with st.expander("✏️ Editar ou Excluir Apontamento de Sobra"):
+                if not df_sobras.empty:
+                    df_sos_com_sobra = df_sobras[['so', 'so_customer']].drop_duplicates()
+                    lista_sos_edit = ["- Selecione o Projeto -"] + sorted([f"{r['so']} - {r['so_customer'] if pd.notna(r['so_customer']) else 'Sem Cliente'}" for _, r in df_sos_com_sobra.iterrows()])
+                    
+                    so_edit_sel = st.selectbox("1. Selecione o Projeto (SO):", lista_sos_edit, key="so_edit_sobra_sel")
+                    
+                    if so_edit_sel != "- Selecione o Projeto -":
+                        so_clean_edit = so_edit_sel.split(" - ")[0].strip()
+                        df_sobras_filtro = df_sobras[df_sobras['so'] == so_clean_edit]
+                        
+                        sobra_edit_list = ["- Selecione o Material -"] + [f"ID {r['id']} | Cód: {r['codigo']} - {r['descricao'][:30]}..." for _, r in df_sobras_filtro.iterrows()]
+                        sobra_selecionada = st.selectbox("2. Selecione o registro:", sobra_edit_list, key="item_edit_sobra_sel")
+                        
+                        if sobra_selecionada != "- Selecione o Material -":
+                            id_edit = sobra_selecionada.split(" | ")[0].replace("ID ", "")
+                            row_sobra = df_sobras_filtro[df_sobras_filtro['id'].astype(str) == id_edit].iloc[0]
+                            
+                            st.write("**3. Altere os dados abaixo:**")
+                            
+                            c_e1, c_e2 = st.columns(2)
+                            edit_cod = c_e1.text_input("Código do Material", value=row_sobra['codigo'], key="ed_cod_sobra")
+                            edit_qtd = c_e2.number_input("Quantidade", value=int(row_sobra['quantidade']), min_value=1, step=1, key="ed_qtd_sobra")
+                            
+                            edit_desc = st.text_area("Descrição", value=row_sobra['descricao'], key="ed_desc_sobra")
+                            
+                            df_dest_edit = pd.read_sql_query("SELECT destinacao FROM destinacoes_sobra", engine)
+                            list_dest_edit = df_dest_edit['destinacao'].tolist() if not df_dest_edit.empty else ["- Vazio -"]
+                            
+                            try:
+                                idx_dest = list_dest_edit.index(row_sobra['destinacao'])
+                            except ValueError:
+                                idx_dest = 0
                                 
-                                st.write("")
-                                c_btn_e1, c_btn_e2 = st.columns([1, 1])
-                                
-                                if c_btn_e1.button("💾 Salvar Alterações", type="primary", use_container_width=True):
-                                    if not edit_cod or not edit_desc:
-                                        st.error("O Código e a Descrição não podem ficar em branco.")
-                                    else:
-                                        cursor.execute("""
-                                            UPDATE materiais_sobra 
-                                            SET codigo=%s, descricao=%s, quantidade=%s, valor=%s, destinacao=%s 
-                                            WHERE id=%s
-                                        """, (edit_cod.strip(), edit_desc.strip(), edit_qtd, edit_val, edit_dest, id_edit))
-                                        conn.commit()
-                                        st.success("✔️ Registro atualizado com sucesso!")
-                                        time_sys.sleep(1.5)
-                                        st.rerun()
-                                        
-                                if c_btn_e2.button("🗑️ Excluir Registro", use_container_width=True):
-                                    cursor.execute("DELETE FROM materiais_sobra WHERE id=%s", (id_edit,))
+                            c_e3, c_e4 = st.columns(2)
+                            # ATUALIZADO: "Valor Unitário"
+                            edit_val = c_e3.number_input("Valor Unitário (R$)", value=float(row_sobra['valor']), min_value=0.0, step=10.0, key="ed_val_sobra")
+                            edit_dest = c_e4.selectbox("Destinação", list_dest_edit, index=idx_dest, key="ed_dest_sobra")
+                            
+                            st.write("")
+                            c_btn_e1, c_btn_e2 = st.columns([1, 1])
+                            
+                            if c_btn_e1.button("💾 Salvar Alterações", type="primary", use_container_width=True):
+                                if not edit_cod or not edit_desc:
+                                    st.error("O Código e a Descrição não podem ficar em branco.")
+                                else:
+                                    cursor.execute("""
+                                        UPDATE materiais_sobra 
+                                        SET codigo=%s, descricao=%s, quantidade=%s, valor=%s, destinacao=%s 
+                                        WHERE id=%s
+                                    """, (edit_cod.strip(), edit_desc.strip(), edit_qtd, edit_val, edit_dest, id_edit))
                                     conn.commit()
-                                    st.success("✔️ Registro excluído!")
+                                    st.success("✔️ Registro atualizado com sucesso!")
                                     time_sys.sleep(1.5)
                                     st.rerun()
-                    else:
-                        st.info("Nenhuma sobra para editar.")
-
-            with col_sob_dir:
-                st.markdown("#### 📊 Extrato de Sobras (Custos e Destinação)")
-                
-                if not df_sobras.empty:
-                    # 1. PREPARAÇÃO E CÁLCULO DO VALOR TOTAL
-                    df_sobras['valor_unit_num'] = pd.to_numeric(df_sobras['valor'], errors='coerce').fillna(0)
-                    df_sobras['quantidade_num'] = pd.to_numeric(df_sobras['quantidade'], errors='coerce').fillna(0)
-                    df_sobras['valor_total_calc'] = df_sobras['quantidade_num'] * df_sobras['valor_unit_num']
-                    df_sobras['mes_ano'] = pd.to_datetime(df_sobras['data_registro']).dt.strftime('%m/%Y')
-                    
-                    # 2. FILTROS INTERATIVOS DE TELA
-                    meses_disp = ["- Todos os Meses -"] + sorted(df_sobras['mes_ano'].unique().tolist(), reverse=True)
-                    projetos_disp = ["- Todos os Projetos -"] + sorted(df_sobras['so'].unique().tolist())
-                    
-                    cf1, cf2 = st.columns(2)
-                    filtro_mes = cf1.selectbox("📅 Filtrar por Mês:", meses_disp, key="filtro_mes_sobra_geral")
-                    filtro_proj = cf2.selectbox("📁 Filtrar por Projeto:", projetos_disp, key="filtro_proj_sobra_geral")
-                    
-                    # Aplica os filtros na tabela e gráficos
-                    df_sobras_filt = df_sobras.copy()
-                    if filtro_mes != "- Todos os Meses -":
-                        df_sobras_filt = df_sobras_filt[df_sobras_filt['mes_ano'] == filtro_mes]
-                    if filtro_proj != "- Todos os Projetos -":
-                        df_sobras_filt = df_sobras_filt[df_sobras_filt['so'] == filtro_proj]
-
-                    if not df_sobras_filt.empty:
-                        # --- GRÁFICOS ATUALIZADOS ---
-                        cg1, cg2 = st.columns(2)
-                        
-                        with cg1:
-                            df_graf_so = df_sobras_filt.groupby('so')['valor_total_calc'].sum().reset_index()
-                            df_graf_so = df_graf_so.sort_values(by='valor_total_calc', ascending=True).tail(10)
-                            df_graf_so['valor_str'] = df_graf_so['valor_total_calc'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                            
-                            fig_so = px.bar(df_graf_so, x='valor_total_calc', y='so', orientation='h', 
-                                            title="Top 10 Projetos (Custo Total R$)",
-                                            text='valor_str',
-                                            color_discrete_sequence=['#dc3545'])
-                            
-                            fig_so.update_traces(textposition='auto', textfont=dict(color='white' if len(df_graf_so) > 0 else 'black'))
-                            fig_so.update_layout(height=280, margin=dict(l=10, r=20, t=30, b=10), xaxis=dict(showticklabels=False, title=""), yaxis=dict(title=""))
-                            st.plotly_chart(fig_so, use_container_width=True)
-                            
-                        with cg2:
-                            df_graf_dest = df_sobras_filt.groupby('destinacao')['valor_total_calc'].sum().reset_index()
-                            
-                            fig_dest = px.pie(df_graf_dest, names='destinacao', values='valor_total_calc', hole=0.45, 
-                                              title="Proporção Financeira por Destinação",
-                                              color_discrete_sequence=px.colors.qualitative.Pastel)
-                            
-                            fig_dest.update_traces(textinfo='percent', textposition='inside', insidetextorientation='radial')
-                            fig_dest.update_layout(height=280, margin=dict(l=10, r=10, t=30, b=10), 
-                                                   legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5))
-                            st.plotly_chart(fig_dest, use_container_width=True)
-                        
-                        st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px;'>", unsafe_allow_html=True)
-                        
-                        # --- TABELA CORRIGIDA (Unitário e Total) ---
-                        df_sobras_view = df_sobras_filt.copy()
-                        df_sobras_view['data_registro'] = pd.to_datetime(df_sobras_view['data_registro']).dt.strftime('%d/%m/%Y')
-                        
-                        df_sobras_view['v_unit_str'] = df_sobras_view['valor_unit_num'].apply(lambda x: f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                        df_sobras_view['v_total_str'] = df_sobras_view['valor_total_calc'].apply(lambda x: f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                        
-                        cols_rename = {
-                            'so': 'SO', 'so_customer': 'Cliente', 'codigo': 'Código', 'descricao': 'Descrição',
-                            'quantidade': 'Qtd', 'v_unit_str': 'V. Unitário', 'v_total_str': 'Custo Total', 
-                            'destinacao': 'Destinação', 'data_registro': 'Data'
-                        }
-                        
-                        st.dataframe(df_sobras_view[['so', 'so_customer', 'codigo', 'descricao', 'quantidade', 'v_unit_str', 'v_total_str', 'destinacao', 'data_registro']].rename(columns=cols_rename), width="stretch", hide_index=True)
-                    else:
-                        st.warning("Nenhum dado encontrado para os filtros aplicados.")
+                                    
+                            if c_btn_e2.button("🗑️ Excluir Registro", use_container_width=True):
+                                cursor.execute("DELETE FROM materiais_sobra WHERE id=%s", (id_edit,))
+                                conn.commit()
+                                st.success("✔️ Registro excluído!")
+                                time_sys.sleep(1.5)
+                                st.rerun()
                 else:
-                    st.info("Nenhuma sobra de material registrada até o momento.")
-    
+                    st.info("Nenhuma sobra para editar.")
+
+        with col_sob_dir:
+            st.markdown("#### 📊 Extrato de Sobras (Custos e Destinação)")
+            
+            if not df_sobras.empty:
+                # 1. PREPARAÇÃO E CÁLCULO DO VALOR TOTAL
+                df_sobras['valor_unit_num'] = pd.to_numeric(df_sobras['valor'], errors='coerce').fillna(0)
+                df_sobras['quantidade_num'] = pd.to_numeric(df_sobras['quantidade'], errors='coerce').fillna(0)
+                df_sobras['valor_total_calc'] = df_sobras['quantidade_num'] * df_sobras['valor_unit_num']
+                df_sobras['mes_ano'] = pd.to_datetime(df_sobras['data_registro']).dt.strftime('%m/%Y')
+                
+                # 2. FILTROS INTERATIVOS DE TELA
+                meses_disp = ["- Todos os Meses -"] + sorted(df_sobras['mes_ano'].unique().tolist(), reverse=True)
+                projetos_disp = ["- Todos os Projetos -"] + sorted(df_sobras['so'].unique().tolist())
+                
+                cf1, cf2 = st.columns(2)
+                filtro_mes = cf1.selectbox("📅 Filtrar por Mês:", meses_disp, key="filtro_mes_sobra_geral")
+                filtro_proj = cf2.selectbox("📁 Filtrar por Projeto:", projetos_disp, key="filtro_proj_sobra_geral")
+                
+                # Aplica os filtros na tabela e gráficos
+                df_sobras_filt = df_sobras.copy()
+                if filtro_mes != "- Todos os Meses -":
+                    df_sobras_filt = df_sobras_filt[df_sobras_filt['mes_ano'] == filtro_mes]
+                if filtro_proj != "- Todos os Projetos -":
+                    df_sobras_filt = df_sobras_filt[df_sobras_filt['so'] == filtro_proj]
+
+                if not df_sobras_filt.empty:
+                    # --- GRÁFICOS ATUALIZADOS ---
+                    cg1, cg2 = st.columns(2)
+                    
+                    with cg1:
+                        df_graf_so = df_sobras_filt.groupby('so')['valor_total_calc'].sum().reset_index()
+                        df_graf_so = df_graf_so.sort_values(by='valor_total_calc', ascending=True).tail(10)
+                        df_graf_so['valor_str'] = df_graf_so['valor_total_calc'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        
+                        fig_so = px.bar(df_graf_so, x='valor_total_calc', y='so', orientation='h', 
+                                        title="Top 10 Projetos (Custo Total R$)",
+                                        text='valor_str',
+                                        color_discrete_sequence=['#dc3545'])
+                        
+                        fig_so.update_traces(textposition='auto', textfont=dict(color='white' if len(df_graf_so) > 0 else 'black'))
+                        fig_so.update_layout(height=280, margin=dict(l=10, r=20, t=30, b=10), xaxis=dict(showticklabels=False, title=""), yaxis=dict(title=""))
+                        st.plotly_chart(fig_so, use_container_width=True)
+                        
+                    with cg2:
+                        df_graf_dest = df_sobras_filt.groupby('destinacao')['valor_total_calc'].sum().reset_index()
+                        
+                        fig_dest = px.pie(df_graf_dest, names='destinacao', values='valor_total_calc', hole=0.45, 
+                                            title="Proporção Financeira por Destinação",
+                                            color_discrete_sequence=px.colors.qualitative.Pastel)
+                        
+                        fig_dest.update_traces(textinfo='percent', textposition='inside', insidetextorientation='radial')
+                        fig_dest.update_layout(height=280, margin=dict(l=10, r=10, t=30, b=10), 
+                                                legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5))
+                        st.plotly_chart(fig_dest, use_container_width=True)
+                    
+                    st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px;'>", unsafe_allow_html=True)
+                    
+                    # --- TABELA CORRIGIDA (Unitário e Total) ---
+                    df_sobras_view = df_sobras_filt.copy()
+                    df_sobras_view['data_registro'] = pd.to_datetime(df_sobras_view['data_registro']).dt.strftime('%d/%m/%Y')
+                    
+                    df_sobras_view['v_unit_str'] = df_sobras_view['valor_unit_num'].apply(lambda x: f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    df_sobras_view['v_total_str'] = df_sobras_view['valor_total_calc'].apply(lambda x: f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    
+                    cols_rename = {
+                        'so': 'SO', 'so_customer': 'Cliente', 'codigo': 'Código', 'descricao': 'Descrição',
+                        'quantidade': 'Qtd', 'v_unit_str': 'V. Unitário', 'v_total_str': 'Custo Total', 
+                        'destinacao': 'Destinação', 'data_registro': 'Data'
+                    }
+                    
+                    st.dataframe(df_sobras_view[['so', 'so_customer', 'codigo', 'descricao', 'quantidade', 'v_unit_str', 'v_total_str', 'destinacao', 'data_registro']].rename(columns=cols_rename), width="stretch", hide_index=True)
+                else:
+                    st.warning("Nenhum dado encontrado para os filtros aplicados.")
+            else:
+                st.info("Nenhuma sobra de material registrada até o momento.")
+
     # ==========================================
     # TIMELINE E MARCOS DO PROJETO (Estilo Infográfico Executivo)
     # ==========================================
