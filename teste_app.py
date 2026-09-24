@@ -4367,22 +4367,55 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
             st.info("💡 Classifique os motivos nas tabelas acima para gerar o gráfico executivo de Causas Raízes.")
 
         st.markdown("---")
-        st.markdown("### 💾 Salvar e Exportar Auditoria")
-        col_b1, col_b2 = st.columns(2)
-        
         if col_b1.button("📥 Gravar Histórico no Banco (Com Justificativas)", type="primary", use_container_width=True):
-            with st.spinner("Gravando desvios e motivos..."):
-                # Garante que as novas colunas existam no banco
+            with st.spinner("Gravando desvios, totalizadores e motivos..."):
+                
+                so_salvar = st.session_state.get('so_auditoria_atual', 'N/A')
+                proj_salvar = st.session_state.get('proj_auditoria_atual', 'N/A')
+                texto_justificativa = st.session_state.get('just_variancia', '')
+
+                # 1. PREPARAÇÃO DO BANCO DE DADOS (Criação de colunas e da nova tabela Macro)
                 try: 
                     cursor.execute("ALTER TABLE auditoria_3vias_historico ADD COLUMN IF NOT EXISTS motivo TEXT")
                     cursor.execute("ALTER TABLE auditoria_3vias_historico ADD COLUMN IF NOT EXISTS so TEXT")
                     cursor.execute("ALTER TABLE auditoria_3vias_historico ADD COLUMN IF NOT EXISTS nome_projeto TEXT")
+                    
+                    # Cria a tabela Macro se não existir
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS auditoria_financeira_macro (
+                            id SERIAL PRIMARY KEY,
+                            data_auditoria TIMESTAMP,
+                            so TEXT,
+                            nome_projeto TEXT,
+                            plan_labor NUMERIC,
+                            real_labor NUMERIC,
+                            delta_labor NUMERIC,
+                            plan_oh NUMERIC,
+                            real_oh NUMERIC,
+                            delta_oh NUMERIC,
+                            plan_mat NUMERIC,
+                            real_mat NUMERIC,
+                            delta_mat NUMERIC,
+                            justificativa TEXT
+                        )
+                    ''')
                 except: pass
                 conn.commit()
                 
-                so_salvar = st.session_state.get('so_auditoria_atual', 'N/A')
-                proj_salvar = st.session_state.get('proj_auditoria_atual', 'N/A')
+                # 2. GRAVAÇÃO MACRO (Totais Financeiros e Justificativa)
+                cursor.execute("""
+                    INSERT INTO auditoria_financeira_macro 
+                    (data_auditoria, so, nome_projeto, plan_labor, real_labor, delta_labor, plan_oh, real_oh, delta_oh, plan_mat, real_mat, delta_mat, justificativa)
+                    VALUES (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    so_salvar, proj_salvar, 
+                    plan_labor, real_labor, delta_labor,
+                    plan_oh, real_oh, delta_oh,
+                    plan_mat, real_mat, delta_mat,
+                    texto_justificativa
+                ))
                 
+                # 3. GRAVAÇÃO MICRO (Itens detalhados com desvio)
                 df_gravar = df_final[df_final['Status'].str.contains('Consumo Excedente|Consumo Abaixo da Qtd BOM|BOM:|Alerta:')]
                 for _, r in df_gravar.iterrows():
                     cursor.execute("""
@@ -4394,8 +4427,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         r['Quantity'], r['Desvio Engenharia'], r['Desvio Fábrica'], 
                         r['Impacto Financeiro (R$)'], r['Status'], r['Motivo'], so_salvar, proj_salvar
                     ))
+                
                 conn.commit()
-                st.success(f"✔️ {len(df_gravar)} desvios da SO {so_salvar} gravados no banco de dados!")
+                st.success(f"✔️ Auditoria Completa da SO {so_salvar} gravada com sucesso! (Resumo Financeiro + {len(df_gravar)} itens com desvio)")
 
         if col_b2.button("📄 Gerar Relatório Executivo (PDF)", use_container_width=True):
             with st.spinner("Desenhando documento executivo..."):
