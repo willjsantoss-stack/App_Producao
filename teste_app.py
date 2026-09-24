@@ -4455,6 +4455,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     # =====================================================================
                     # INÍCIO DO CÓDIGO DO PASSO 4 (INSERIDO AQUI)
                     # =====================================================================
+                    # --- INJEÇÃO DA VARIÂNCIA NO PDF ---
                     if plan_labor > 0 or plan_mat > 0:
                         story.append(Paragraph("1.1 Análise de Variância Orçamental (Price Calculation)", header_style))
                         
@@ -4479,15 +4480,27 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         story.append(t_var)
                         
                         if tem_estouro:
-                            story.append(Spacer(1, 10))
-                            story.append(Paragraph("<b>Justificativa Técnica do Desvio:</b>", styles['Normal']))
-                            story.append(Paragraph(f"<i>{justificativa_desvio}</i>", styles['Normal']))
+                            # Estilo personalizado para a caixa de Justificativa
+                            style_justificativa = ParagraphStyle(
+                                'Justificativa',
+                                parent=styles['Normal'],
+                                backColor=colors.HexColor("#FFF3CD"), # Fundo amarelo claro de alerta
+                                borderColor=colors.HexColor("#FFEEBA"),
+                                borderWidth=1,
+                                borderPadding=8,
+                                spaceBefore=15,
+                                spaceAfter=15,
+                                fontName='Helvetica-Oblique',
+                                fontSize=9,
+                                textColor=colors.HexColor("#856404")
+                            )
                             
-                        story.append(Spacer(1, 15))
-                    # =====================================================================
-                    # FIM DO CÓDIGO DO PASSO 4
-                    # =====================================================================
-
+                            texto_just = st.session_state.get('just_variancia', 'Nenhuma justificativa inserida.')
+                            if not texto_just.strip(): texto_just = "Justificativa não fornecida pelo usuário."
+                            
+                            story.append(Paragraph(f"<b>Justificativa Técnica do Desvio (Estouro de Orçamento):</b><br/><br/>{texto_just}", style_justificativa))
+                            
+                    story.append(PageBreak())
                     story.append(Paragraph("2. Diagnóstico Executivo de Causa Raiz", header_style))
                     
                     # Ajustando o tamanho da figura para evitar cortes
