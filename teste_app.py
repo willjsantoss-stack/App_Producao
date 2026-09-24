@@ -4383,9 +4383,9 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                 # 1. PREPARAÇÃO DO BANCO DE DADOS (Com proteção de Transação)
                 conn.rollback() # Limpa qualquer erro prévio pendente no banco
                 
-                # Cria a tabela Macro se não existir
+                # Cria a tabela Macro se não existir (Prefixo public. adicionado)
                 cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS auditoria_financeira_macro (
+                    CREATE TABLE IF NOT EXISTS public.auditoria_financeira_macro (
                         id SERIAL PRIMARY KEY,
                         data_auditoria TIMESTAMP,
                         so TEXT,
@@ -4407,21 +4407,21 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                 # Adiciona colunas novas com tratamento individual para não travar o banco
                 for col_name in ['motivo', 'so', 'nome_projeto']:
                     try: 
-                        cursor.execute(f"ALTER TABLE auditoria_3vias_historico ADD COLUMN {col_name} TEXT")
+                        cursor.execute(f"ALTER TABLE public.auditoria_3vias_historico ADD COLUMN {col_name} TEXT")
                         conn.commit()
                     except:
                         conn.rollback() # Se a coluna já existir, ele cancela o erro e segue a vida
                 
                 # 2. GRAVAÇÃO MACRO (Totais Financeiros e Justificativa)
                 cursor.execute("""
-                    INSERT INTO auditoria_financeira_macro 
+                    INSERT INTO public.auditoria_financeira_macro 
                     (data_auditoria, so, nome_projeto, plan_labor, real_labor, delta_labor, plan_oh, real_oh, delta_oh, plan_mat, real_mat, delta_mat, justificativa)
                     VALUES (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     so_salvar, proj_salvar, 
-                    plan_labor, real_labor, delta_labor,
-                    plan_oh, real_oh, delta_oh,
-                    plan_mat, real_mat, delta_mat,
+                    float(plan_labor), float(real_labor), float(delta_labor),
+                    float(plan_oh), float(real_oh), float(delta_oh),
+                    float(plan_mat), float(real_mat), float(delta_mat),
                     texto_justificativa
                 ))
                 
@@ -4429,18 +4429,18 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                 df_gravar = df_final[df_final['Status'].str.contains('Consumo Excedente|Consumo Abaixo da Qtd BOM|BOM:|Alerta:')]
                 for _, r in df_gravar.iterrows():
                     cursor.execute("""
-                        INSERT INTO auditoria_3vias_historico 
+                        INSERT INTO public.auditoria_3vias_historico 
                         (data_auditoria, item, descricao, qtd_bom_inicial, qtd_bom_final, qtd_real, desvio_engenharia, desvio_fabrica, valor_impacto, status, motivo, so, nome_projeto)
                         VALUES (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
-                        r['Item'], r['Descrição'], r['qtd_ini'], r['Consumption per lot size'], 
-                        r['Quantity'], r['Desvio Engenharia'], r['Desvio Fábrica'], 
-                        r['Impacto Financeiro (R$)'], r['Status'], r['Motivo'], so_salvar, proj_salvar
+                        r['Item'], r['Descrição'], float(r['qtd_ini']), float(r['Consumption per lot size']), 
+                        float(r['Quantity']), float(r['Desvio Engenharia']), float(r['Desvio Fábrica']), 
+                        float(r['Impacto Financeiro (R$)']), r['Status'], r['Motivo'], so_salvar, proj_salvar
                     ))
                 
                 conn.commit()
                 st.success(f"✔️ Auditoria Completa da SO {so_salvar} gravada com sucesso! (Resumo Financeiro + {len(df_gravar)} itens com desvio)")
-                
+
         if col_b2.button("📄 Gerar Relatório Executivo (PDF)", use_container_width=True):
             with st.spinner("Desenhando documento executivo..."):
                 try:
