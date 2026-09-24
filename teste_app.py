@@ -4367,6 +4367,10 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
             st.info("💡 Classifique os motivos nas tabelas acima para gerar o gráfico executivo de Causas Raízes.")
 
         st.markdown("---")
+        st.markdown("### 💾 Salvar e Exportar Auditoria")
+        
+        col_b1, col_b2 = st.columns(2)
+        
         if col_b1.button("📥 Gravar Histórico no Banco (Com Justificativas)", type="primary", use_container_width=True):
             with st.spinner("Gravando desvios, totalizadores e motivos..."):
                 
