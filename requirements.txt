@@ -4,9 +4,8 @@ plotly
 Pillow
 psycopg2-binary
 SQLAlchemy
-openpyxl
-fpdf
-supabase
 requests
-reportlab
+supabase
+fpdf
+openpyxl
 matplotlib
