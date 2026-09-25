@@ -1234,66 +1234,6 @@ elif menu_selecionado == "📊 Dash. Projetos":
 
     st.markdown("---")
 
-    st.markdown("### 🚨 Análise de Custo: Impacto de Horas Extras no Orçamento")
-    
-    col_proj_he1, col_proj_he2 = st.columns([1, 2])
-    
-    with col_proj_he1:
-        st.write(f"**Composição de Horas do Projeto Selecionado**")
-        df_he_so_micro = pd.read_sql_query("""
-            SELECT SUM(horas_normais) as normais, SUM(he_50) as he50, SUM(he_100) as he100 
-            FROM apontamentos 
-            WHERE so=%(so)s AND tipo IN ('Produção Normal', 'Retrabalho', 'Parada')
-        """, engine, params={"so": so_dash_clean})
-        
-        if not df_he_so_micro.empty and (df_he_so_micro['normais'][0] or df_he_so_micro['he50'][0] or df_he_so_micro['he100'][0]):
-            v_norm = df_he_so_micro['normais'].iloc[0] or 0.0
-            v_he50 = df_he_so_micro['he50'].iloc[0] or 0.0
-            v_he100 = df_he_so_micro['he100'].iloc[0] or 0.0
-            
-            fig_pie_he = px.pie(names=['Horas Normais', 'Hora Extra 50%', 'Hora Extra 100%'], 
-                                values=[v_norm, v_he50, v_he100],
-                                color_discrete_sequence=['#004a99', '#17a2b8', '#fd7e14'],
-                                hole=0.5)
-            fig_pie_he.update_layout(height=350, margin=dict(l=20, r=20, t=20, b=20),
-                                     legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="center", x=0.5))
-            st.plotly_chart(fig_pie_he, width="stretch", key="pie_he_proj_micro")
-        else:
-            st.info("Sem apontamentos para compor o custo deste projeto.")
-
-    with col_proj_he2:
-        st.write(f"**Comparativo de Horas Extras por Projetos Ativos (Geral)**")
-        df_he_macro = pd.read_sql_query("""
-            SELECT a.so, 
-                   SUM(a.horas_normais) as normais, 
-                   SUM(a.he_50) as he50, 
-                   SUM(a.he_100) as he100
-            FROM apontamentos a
-            WHERE a.so != 'N/A' AND EXISTS (
-                SELECT 1 FROM projetos p 
-                WHERE p.so = a.so 
-                AND (UPPER(TRIM(p.status_producao)) != 'FINALIZADO' OR p.status_producao IS NULL)
-            )
-            GROUP BY a.so
-            HAVING (SUM(a.horas_normais) + SUM(a.he_50) + SUM(a.he_100)) > 0
-        """, engine)
-        
-        if not df_he_macro.empty:
-            df_he_macro['Total'] = df_he_macro['normais'] + df_he_macro['he50'] + df_he_macro['he100']
-            df_he_macro = df_he_macro.sort_values(by='Total', ascending=False).head(10)
-            
-            fig_bar_he = go.Figure()
-            fig_bar_he.add_trace(go.Bar(x=df_he_macro['so'], y=df_he_macro['normais'], name='Horas Normais', marker_color='#004a99'))
-            fig_bar_he.add_trace(go.Bar(x=df_he_macro['so'], y=df_he_macro['he50'], name='HE 50%', marker_color='#17a2b8'))
-            fig_bar_he.add_trace(go.Bar(x=df_he_macro['so'], y=df_he_macro['he100'], name='HE 100%', marker_color='#fd7e14'))
-            
-            fig_bar_he.update_layout(barmode='stack', height=350, margin=dict(l=20, r=20, t=20, b=20),
-                                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
-            st.plotly_chart(fig_bar_he, width="stretch", key="bar_he_proj_macro")
-        else:
-            st.info("Nenhum projeto ativo com apontamentos para analisar.")
-
-    st.markdown("---")
     st.markdown("### 📑 Extrato Detalhado do Projeto (Kardex de Horas)")
     st.write("Auditoria completa: Verifique quem apontou, quando, qual a WO e se houve apontamento de perdas/retrabalhos.")
 
@@ -3612,7 +3552,7 @@ elif menu_selecionado == "📈 Painel Executivo (BI)":
                         st.info("Nenhum dado de orçamento encontrado para os projetos movimentados.")
                 else:
                     st.info("Nenhum projeto foi movimentado no período selecionado.")
-                    
+
             with col_g2:
                 # Primeiro fazemos os cálculos
                 df_ret_linha = df_bi[df_bi['tipo'] == 'Retrabalho'].copy()
