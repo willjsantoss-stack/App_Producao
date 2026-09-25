@@ -595,7 +595,7 @@ menu_selecionado = st.radio(
         "📊 Dash. Projetos", 
         "👥 Dash. RH",
         "🔍 Manutenção",
-        "📊 Auditoria BOM vs Real", # <--- ADICIONE ESTA LINHA AQUI NA LISTA 
+        "📊 Auditoria BOM vs Real", 
         "📑 Relatórios PDF",
         "📈 Painel Executivo (BI)"
     ],
@@ -2498,14 +2498,12 @@ elif menu_selecionado == "📅 Planejamento de Carga":
     st.markdown("---")
     
 # ------------------------------------------
-# ABA: KANBAN E TIMELINE
+# ABA: MATERIAIS E TIMELINE
 # ------------------------------------------
-elif menu_selecionado == "🗂️ Kanban & Timeline":
-    c_tit, c_btn = st.columns([4, 1])
-    c_tit.markdown("## 🗂️ Materiais e Timeline")  # <--- Título atualizado
+elif menu_selecionado == "📦 Materiais e Timeline":
     
-    # Botão de Sincronização Manual (Resolve o problema de atualização para outros usuários)
-    st.write("")
+    # Botão de Sincronização Manual alinhado à direita
+    _, c_btn = st.columns([5, 1])
     if c_btn.button("🔄 Sincronizar Tela", type="primary", use_container_width=True, help="Puxar as últimas alterações feitas por outros usuários."):
         st.rerun()
     
