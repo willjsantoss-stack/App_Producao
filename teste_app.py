@@ -3532,10 +3532,10 @@ elif menu_selecionado == "📈 Painel Executivo (BI)":
         dt_inicio_bi = col_f1.date_input("Data Início (Análise):", hoje_bi.replace(day=1), format="DD/MM/YYYY")
         dt_fim_bi = col_f2.date_input("Data Fim (Análise):", hoje_bi, format="DD/MM/YYYY")
     
-    # Busca todos os apontamentos
+    # Busca todos os apontamentos (Adicionado o a.so para podermos cruzar com o projeto)
     query_bi = """
         SELECT a.data_registro, a.matricula, c.linha, a.tipo, a.atividade, a.tipo_erro, a.causador_erro, 
-               (a.horas_normais + a.he_50 + a.he_100) as horas_totais, a.saldo_bh
+               (a.horas_normais + a.he_50 + a.he_100) as horas_totais, a.saldo_bh, a.so
         FROM apontamentos a
         LEFT JOIN colaboradores c ON a.matricula = c.matricula
     """
@@ -3553,55 +3553,66 @@ elif menu_selecionado == "📈 Painel Executivo (BI)":
             h_perdas = h_retrabalho + h_parada
             h_trabalhadas = h_uteis + h_perdas
             
-            eficiencia_global = (h_uteis / h_trabalhadas * 100) if h_trabalhadas > 0 else 0.0
             taxa_retrabalho = (h_retrabalho / h_trabalhadas * 100) if h_trabalhadas > 0 else 0.0
 
+            # Cálculos de Rentabilidade (Orçamento vs Realizado) do período
+            sos_ativas_periodo = df_bi[df_bi['so'].notna() & (df_bi['so'] != 'N/A')]['so'].unique()
+            df_vendidas_ativas = pd.read_sql_query("SELECT so, SUM(horas_vendidas) as vendidas FROM projetos GROUP BY so", engine)
+            total_vendidas_periodo = df_vendidas_ativas[df_vendidas_ativas['so'].isin(sos_ativas_periodo)]['vendidas'].sum()
+            saldo_horas = total_vendidas_periodo - h_trabalhadas
+
             # --- RENDERIZAÇÃO DOS KPIs (TERMÔMETROS) ---
-            st.markdown("### 🏆 KPIs Principais")
+            st.markdown("### 🏆 KPIs Principais (Período)")
             kpi1, kpi2, kpi3, kpi4 = st.columns(4)
             
-            kpi1.metric("Eficiência Líquida (OEE)", f"{eficiencia_global:.1f}%", help="Percentual do tempo gasto agregando valor.")
-            kpi2.metric("Tempo Útil Produzido", f"{h_uteis:.0f}h", help="Total de horas normais de produção.")
+            kpi1.metric("Orçamento (Projetos Ativos)", f"{total_vendidas_periodo:.0f}h", help="Soma das horas vendidas das ordens trabalhadas neste período.")
+            kpi2.metric("Horas Consumidas (Total)", f"{h_trabalhadas:.0f}h", delta=f"Saldo: {saldo_horas:.0f}h", delta_color="normal" if saldo_horas >= 0 else "inverse", help="Total de horas apontadas (Úteis + Perdas). Se o saldo for negativo, a fábrica consumiu mais do que foi vendido.")
             kpi3.metric("Tempo Perdido (Custo)", f"{h_perdas:.0f}h", delta=f"{-h_perdas:.0f}h", delta_color="inverse", help="Soma de horas gastas com Retrabalho e Paradas.")
             kpi4.metric("Taxa de Retrabalho", f"{taxa_retrabalho:.1f}%", delta="Meta: < 5%", delta_color="off")
             
             st.markdown("---")
             
-            # --- LINHA 1 DE GRÁFICOS: TENDÊNCIA E SETORES ---
+            # --- LINHA 1 DE GRÁFICOS: ORÇAMENTO E RETRABALHO ---
             col_g1, col_g2 = st.columns(2)
             
             with col_g1:
-                st.markdown("#### 📈 Evolução Diária da Eficiência")
-                df_diario = df_bi[df_bi['tipo'].isin(['Produção Normal', 'Retrabalho', 'Parada'])].groupby(['data_dt', 'tipo'])['horas_totais'].sum().unstack(fill_value=0).reset_index()
-                for col in ['Produção Normal', 'Retrabalho', 'Parada']:
-                    if col not in df_diario.columns: df_diario[col] = 0.0
-                        
-                df_diario['Total'] = df_diario['Produção Normal'] + df_diario['Retrabalho'] + df_diario['Parada']
-                df_diario['Eficiencia'] = (df_diario['Produção Normal'] / df_diario['Total'] * 100).fillna(0)
+                st.markdown("#### 📊 Consumo Real vs. Orçamento (Top 10 Projetos)")
+                # Agrupa o consumo por SO
+                df_consumo_proj = df_bi[df_bi['tipo'].isin(['Produção Normal', 'Retrabalho', 'Parada'])].groupby('so')['horas_totais'].sum().reset_index()
                 
-                fig_evo = go.Figure()
-                fig_evo.add_trace(go.Scatter(x=df_diario['data_dt'], y=df_diario['Eficiencia'], mode='lines+markers', name='Eficiência (%)', line=dict(color='#004a99', width=3), marker=dict(size=8)))
-                fig_evo.add_hline(y=85, line_dash="dot", annotation_text="Meta (85%)", annotation_position="bottom right", line_color="#28a745")
-                fig_evo.update_layout(height=350, yaxis=dict(range=[0, 105], title="Eficiência (%)"), xaxis_title="", margin=dict(t=20, b=10))
-                st.plotly_chart(fig_evo, use_container_width=True)
+                # Faz merge com os dados de venda dos projetos
+                df_vendidas = pd.read_sql_query("SELECT so, customer, SUM(horas_vendidas) as vendidas FROM projetos GROUP BY so, customer", engine)
+                df_cv = pd.merge(df_consumo_proj, df_vendidas, on='so', how='inner')
+                df_cv = df_cv[(df_cv['so'] != 'N/A') & (df_cv['so'] != '')]
+                
+                if not df_cv.empty:
+                    df_cv = df_cv.sort_values(by='horas_totais', ascending=False).head(10)
+                    # Cria um rótulo limpo com o nome do cliente abreviado
+                    df_cv['label'] = df_cv.apply(lambda r: f"{r['so']} ({str(r['customer'])[:10]}...)" if pd.notna(r['customer']) else r['so'], axis=1)
+                    
+                    fig_cv = go.Figure()
+                    fig_cv.add_trace(go.Bar(x=df_cv['label'], y=df_cv['vendidas'], name='Orçamento (Vendidas)', marker_color='#28a745'))
+                    fig_cv.add_trace(go.Bar(x=df_cv['label'], y=df_cv['horas_totais'], name='Consumo Real', marker_color='#004a99'))
+                    
+                    fig_cv.update_layout(barmode='group', height=350, margin=dict(t=20, b=10, l=10, r=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+                    st.plotly_chart(fig_cv, use_container_width=True)
+                else:
+                    st.info("Dados insuficientes para comparar orçamento nos projetos deste período.")
 
             with col_g2:
-                st.markdown("#### 🏭 Eficiência por Setor (Gargalos)")
-                df_setor = df_bi[df_bi['tipo'].isin(['Produção Normal', 'Retrabalho', 'Parada'])].copy()
-                df_setor['linha'] = df_setor['linha'].fillna('Não Identificado')
-                df_grp_setor = df_setor.groupby(['linha', 'tipo'])['horas_totais'].sum().unstack(fill_value=0).reset_index()
+                st.markdown("#### ⚠️ Total de Retrabalho por Setor (Horas)")
+                df_ret_linha = df_bi[df_bi['tipo'] == 'Retrabalho'].copy()
+                df_ret_linha['linha'] = df_ret_linha['linha'].fillna('Não Identificado')
+                df_grp_ret = df_ret_linha.groupby('linha')['horas_totais'].sum().reset_index()
                 
-                for col in ['Produção Normal', 'Retrabalho', 'Parada']:
-                    if col not in df_grp_setor.columns: df_grp_setor[col] = 0.0
-                        
-                df_grp_setor['Total'] = df_grp_setor['Produção Normal'] + df_grp_setor['Retrabalho'] + df_grp_setor['Parada']
-                df_grp_setor['Eficiencia'] = (df_grp_setor['Produção Normal'] / df_grp_setor['Total'] * 100).fillna(0)
-                df_grp_setor = df_grp_setor[df_grp_setor['Total'] > 0].sort_values(by='Eficiencia', ascending=True)
-                
-                fig_setor = px.bar(df_grp_setor, x='Eficiencia', y='linha', orientation='h', text=df_grp_setor['Eficiencia'].apply(lambda x: f"{x:.1f}%"))
-                fig_setor.update_traces(marker_color='#17a2b8', textposition='inside')
-                fig_setor.update_layout(height=350, xaxis=dict(range=[0, 105], title="Eficiência (%)"), yaxis_title="", margin=dict(t=20, b=10))
-                st.plotly_chart(fig_setor, use_container_width=True)
+                if not df_grp_ret.empty and df_grp_ret['horas_totais'].sum() > 0:
+                    df_grp_ret = df_grp_ret.sort_values(by='horas_totais', ascending=True)
+                    
+                    fig_ret_l = px.bar(df_grp_ret, x='horas_totais', y='linha', orientation='h', text_auto='.1f', color_discrete_sequence=['#dc3545'])
+                    fig_ret_l.update_layout(height=350, xaxis_title="Horas Perdidas em Retrabalho", yaxis_title="", margin=dict(t=20, b=10, l=10, r=10))
+                    st.plotly_chart(fig_ret_l, use_container_width=True)
+                else:
+                    st.info("Nenhum apontamento de retrabalho registado nas linhas neste período.")
 
             st.markdown("---")
             
