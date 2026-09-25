@@ -3572,7 +3572,7 @@ elif menu_selecionado == "📈 Painel Executivo (BI)":
             
             st.markdown("---")
             
-            # --- LINHA 1 DE GRÁFICOS: ORÇAMENTO E RETRABALHO ---
+            # --- LINHA 1 DE GRÁFICOS: ORÇAMENTO E OFENSORES DE TEMPO ---
             col_g1, col_g2 = st.columns(2)
             
             with col_g1:
@@ -3587,7 +3587,6 @@ elif menu_selecionado == "📈 Painel Executivo (BI)":
                 
                 if not df_cv.empty:
                     df_cv = df_cv.sort_values(by='horas_totais', ascending=False).head(10)
-                    # Cria um rótulo limpo com o nome do cliente abreviado
                     df_cv['label'] = df_cv.apply(lambda r: f"{r['so']} ({str(r['customer'])[:10]}...)" if pd.notna(r['customer']) else r['so'], axis=1)
                     
                     fig_cv = go.Figure()
@@ -3600,88 +3599,77 @@ elif menu_selecionado == "📈 Painel Executivo (BI)":
                     st.info("Dados insuficientes para comparar orçamento nos projetos deste período.")
 
             with col_g2:
-                st.markdown("#### ⚠️ Total de Retrabalho por Setor (Horas)")
+                # Primeiro fazemos os cálculos
                 df_ret_linha = df_bi[df_bi['tipo'] == 'Retrabalho'].copy()
                 df_ret_linha['linha'] = df_ret_linha['linha'].fillna('Não Identificado')
                 df_grp_ret = df_ret_linha.groupby('linha')['horas_totais'].sum().reset_index()
                 
-                if not df_grp_ret.empty and df_grp_ret['horas_totais'].sum() > 0:
+                # Calculamos o total de horas para injetar no título
+                total_horas_ret = df_grp_ret['horas_totais'].sum() if not df_grp_ret.empty else 0.0
+                
+                # Título dinâmico que se atualiza com os filtros
+                st.markdown(f"#### ⚠️ Total de Retrabalho por Setor ({total_horas_ret:.1f}h Totais)")
+                
+                if not df_grp_ret.empty and total_horas_ret > 0:
                     df_grp_ret = df_grp_ret.sort_values(by='horas_totais', ascending=True)
                     
-                    fig_ret_l = px.bar(df_grp_ret, x='horas_totais', y='linha', orientation='h', text_auto='.1f', color_discrete_sequence=['#dc3545'])
-                    fig_ret_l.update_layout(height=350, xaxis_title="Horas Perdidas em Retrabalho", yaxis_title="", margin=dict(t=20, b=10, l=10, r=10))
+                    fig_ret_l = px.bar(
+                        df_grp_ret, x='horas_totais', y='linha', orientation='h', 
+                        text_auto='.1f', color_discrete_sequence=['#dc3545']
+                    )
+                    fig_ret_l.update_layout(
+                        height=350, xaxis_title="Horas Perdidas em Retrabalho", 
+                        yaxis_title="", margin=dict(t=20, b=10, l=10, r=10)
+                    )
                     st.plotly_chart(fig_ret_l, use_container_width=True)
                 else:
                     st.info("Nenhum apontamento de retrabalho registado nas linhas neste período.")
 
             st.markdown("---")
-            
-            # --- LINHA 2 DE GRÁFICOS: PARETO DE PERDAS ---
-            st.markdown("#### 🚨 Diagrama de Pareto: Ofensores de Custo")
+
+            # --- LINHA 2 DE GRÁFICOS: SUPPLY CHAIN E AUDITORIA FINANCEIRA ---
+            st.markdown("#### 🚨 Gestão de Risco: Peças Faltantes e Desvios Pós-Auditoria")
             col_p1, col_p2 = st.columns(2)
             
             with col_p1:
-                df_pareto_parada = df_bi[df_bi['tipo'] == 'Parada'].groupby('atividade')['horas_totais'].sum().reset_index()
-                if not df_pareto_parada.empty:
-                    df_pareto_parada = df_pareto_parada.sort_values(by='horas_totais', ascending=False).head(7)
-                    fig_par = px.bar(df_pareto_parada, x='atividade', y='horas_totais', title="Top 7 Motivos de Parada", text_auto='.1f', color_discrete_sequence=['#ffc107'])
-                    fig_par.update_layout(height=350, xaxis_title="", yaxis_title="Horas Perdidas")
-                    st.plotly_chart(fig_par, use_container_width=True)
+                st.markdown("**Projetos Bloqueados por Falta de Materiais**")
+                # Busca itens faltantes agrupados por SO na tabela de materiais
+                df_faltas = pd.read_sql_query("SELECT wo as so, COUNT(*) as qtd_itens FROM kanban_materiais WHERE status = 'Faltante' GROUP BY wo", engine)
+                
+                if not df_faltas.empty:
+                    df_faltas = df_faltas.sort_values(by='qtd_itens', ascending=True).tail(8)
+                    fig_faltas = px.bar(df_faltas, x='qtd_itens', y='so', orientation='h', text_auto=True, color_discrete_sequence=['#fd7e14'])
+                    fig_faltas.update_layout(height=350, xaxis_title="Quantidade de Itens Diferentes em Falta", yaxis_title="", margin=dict(t=20, b=10, l=10, r=10))
+                    st.plotly_chart(fig_faltas, use_container_width=True)
                 else:
-                    st.info("Nenhuma parada registrada no período.")
-                    
+                    st.success("✔️ Nenhum projeto com peças em falta no momento (Logística em dia)!")
+
             with col_p2:
-                df_ret_pareto = df_bi[df_bi['tipo'] == 'Retrabalho'].copy()
-                if not df_ret_pareto.empty:
-                    df_ret_pareto['ofensor'] = df_ret_pareto['causador_erro'].replace('', pd.NA).fillna(df_ret_pareto['tipo_erro']).fillna('Outros')
-                    df_pareto_ret = df_ret_pareto.groupby('ofensor')['horas_totais'].sum().reset_index()
-                    df_pareto_ret = df_pareto_ret.sort_values(by='horas_totais', ascending=False).head(7)
+                st.markdown("**Balanço Financeiro de Projetos Fechados (R$)**")
+                # Busca as auditorias macro mais recentes
+                df_macro = pd.read_sql_query("SELECT so, nome_projeto, (delta_labor + delta_oh + delta_mat) as desvio_total FROM auditoria_financeira_macro WHERE (delta_labor + delta_oh + delta_mat) != 0 ORDER BY data_auditoria DESC", engine)
+                
+                if not df_macro.empty:
+                    df_macro = df_macro.drop_duplicates(subset=['so'])
+                    df_macro = df_macro.sort_values(by='desvio_total', ascending=True).tail(8)
                     
-                    fig_ret = px.bar(df_pareto_ret, x='ofensor', y='horas_totais', title="Top 7 Ofensores de Retrabalho", text_auto='.1f', color_discrete_sequence=['#dc3545'])
-                    fig_ret.update_layout(height=350, xaxis_title="", yaxis_title="Horas Refazendo")
-                    st.plotly_chart(fig_ret, use_container_width=True)
+                    # Formatação de cores: Vermelho se gastou a mais (>0), Verde se poupou (<0)
+                    df_macro['cor'] = df_macro['desvio_total'].apply(lambda x: '#dc3545' if x > 0 else '#28a745')
+                    df_macro['texto_fmt'] = df_macro['desvio_total'].apply(lambda x: f"R$ {x:+,.0f}")
+                    df_macro['label'] = df_macro.apply(lambda r: f"{r['so']} ({str(r['nome_projeto'])[:12]}...)" if pd.notna(r['nome_projeto']) else r['so'], axis=1)
+                    
+                    fig_macro = go.Figure(go.Bar(
+                        x=df_macro['desvio_total'], y=df_macro['label'], orientation='h',
+                        text=df_macro['texto_fmt'], textposition='outside', marker_color=df_macro['cor']
+                    ))
+                    
+                    fig_macro.add_vline(x=0, line_width=1, line_dash="dash", line_color="black")
+                    fig_macro.update_layout(height=350, xaxis_title="Prejuízo (> 0) / Economia (< 0)", yaxis_title="", margin=dict(t=20, b=10, l=10, r=60))
+                    st.plotly_chart(fig_macro, use_container_width=True)
                 else:
-                    st.info("Nenhum retrabalho registrado no período.")
+                    st.info("Ainda não existem auditorias com desvios gravadas no sistema.")
 
             st.markdown("---")
-            
-            # --- LINHA 3 DE GRÁFICOS: KANBAN E FLUXO ---
-            st.markdown("#### 🗂️ Desempenho do Fluxo Kanban (Tempo e WIP)")
-            col_k1, col_k2 = st.columns(2)
-            
-            df_kb_bi = pd.read_sql_query("SELECT fase, status, data_inicio, data_fim FROM kanban_fases WHERE categoria = 'Fábrica'", engine)
-            
-            if not df_kb_bi.empty:
-                df_kb_bi['data_inicio'] = pd.to_datetime(df_kb_bi['data_inicio'], errors='coerce')
-                df_kb_bi['data_fim'] = pd.to_datetime(df_kb_bi['data_fim'], errors='coerce')
-                
-                with col_k1:
-                    df_wip = df_kb_bi[df_kb_bi['status'] != 'Concluído'].groupby('fase').size().reset_index(name='qtd_cartoes')
-                    if not df_wip.empty:
-                        fig_wip = px.bar(df_wip, x='qtd_cartoes', y='fase', orientation='h', 
-                                         title="WIP: Onde estão os cartões agora?", text_auto=True, 
-                                         color_discrete_sequence=['#17a2b8'])
-                        fig_wip.update_layout(height=350, xaxis_title="Qtd de Ordens (WOs)", yaxis_title="")
-                        st.plotly_chart(fig_wip, use_container_width=True)
-                    else:
-                        st.info("Nenhum cartão ativo no Kanban de Fábrica.")
-                        
-                with col_k2:
-                    hoje_pd = pd.Timestamp.now()
-                    df_kb_bi['data_fim_calc'] = df_kb_bi['data_fim'].fillna(hoje_pd)
-                    df_kb_bi['dias_na_fase'] = (df_kb_bi['data_fim_calc'] - df_kb_bi['data_inicio']).dt.days
-                    
-                    df_cycle = df_kb_bi.groupby('fase')['dias_na_fase'].mean().reset_index()
-                    if not df_cycle.empty:
-                        fig_cycle = px.bar(df_cycle, x='fase', y='dias_na_fase', 
-                                           title="Tempo Médio por Fase (Cycle Time em Dias)", text_auto='.1f', 
-                                           color_discrete_sequence=['#6cb2eb'])
-                        fig_cycle.update_layout(height=350, xaxis_title="", yaxis_title="Dias Médios")
-                        st.plotly_chart(fig_cycle, use_container_width=True)
-                    else:
-                        st.info("Dados insuficientes para calcular o tempo de ciclo.")
-            else:
-                st.info("Sem dados no Kanban para análise de fluxo.")
 
         else:
             st.info("Nenhum apontamento produtivo encontrado para o período selecionado.")
