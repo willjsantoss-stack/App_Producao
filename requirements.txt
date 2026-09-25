@@ -2,7 +2,7 @@ streamlit
 pandas
 plotly
 Pillow
-psycopg2-binary
+psycopg[binary]
 SQLAlchemy
 requests
 supabase
