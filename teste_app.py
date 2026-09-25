@@ -3576,28 +3576,43 @@ elif menu_selecionado == "📈 Painel Executivo (BI)":
             col_g1, col_g2 = st.columns(2)
             
             with col_g1:
-                st.markdown("#### 📊 Consumo Real vs. Orçamento (Top 10 Projetos)")
-                # Agrupa o consumo por SO
-                df_consumo_proj = df_bi[df_bi['tipo'].isin(['Produção Normal', 'Retrabalho', 'Parada'])].groupby('so')['horas_totais'].sum().reset_index()
+                st.markdown("#### 📊 Consumo Total vs Orçamento (Projetos Movimentados)")
                 
-                # Faz merge com os dados de venda dos projetos
-                df_vendidas = pd.read_sql_query("SELECT so, customer, SUM(horas_vendidas) as vendidas FROM projetos GROUP BY so, customer", engine)
-                df_cv = pd.merge(df_consumo_proj, df_vendidas, on='so', how='inner')
-                df_cv = df_cv[(df_cv['so'] != 'N/A') & (df_cv['so'] != '')]
+                # 1. Identifica quais os projetos (SO) que tiveram horas apontadas APENAS neste período
+                sos_movimentadas = df_bi[df_bi['so'].notna() & (df_bi['so'] != 'N/A') & (df_bi['so'] != '')]['so'].unique().tolist()
                 
-                if not df_cv.empty:
-                    df_cv = df_cv.sort_values(by='horas_totais', ascending=False).head(10)
-                    df_cv['label'] = df_cv.apply(lambda r: f"{r['so']} ({str(r['customer'])[:10]}...)" if pd.notna(r['customer']) else r['so'], axis=1)
+                if sos_movimentadas:
+                    # 2. Vai ao banco buscar o consumo TOTAL HISTÓRICO apenas destas SOs que se movimentaram
+                    # (Para a barra azul ser justa e mostrar tudo o que já se gastou no projeto desde o início)
+                    if len(sos_movimentadas) == 1:
+                        query_hist = f"SELECT so, SUM(horas_normais + he_50 + he_100) as horas_totais FROM apontamentos WHERE so = '{sos_movimentadas[0]}' AND tipo IN ('Produção Normal', 'Retrabalho', 'Parada') GROUP BY so"
+                    else:
+                        query_hist = f"SELECT so, SUM(horas_normais + he_50 + he_100) as horas_totais FROM apontamentos WHERE so IN {tuple(sos_movimentadas)} AND tipo IN ('Produção Normal', 'Retrabalho', 'Parada') GROUP BY so"
                     
-                    fig_cv = go.Figure()
-                    fig_cv.add_trace(go.Bar(x=df_cv['label'], y=df_cv['vendidas'], name='Orçamento (Vendidas)', marker_color='#28a745'))
-                    fig_cv.add_trace(go.Bar(x=df_cv['label'], y=df_cv['horas_totais'], name='Consumo Real', marker_color='#004a99'))
+                    df_consumo_historico = pd.read_sql_query(query_hist, engine)
                     
-                    fig_cv.update_layout(barmode='group', height=350, margin=dict(t=20, b=10, l=10, r=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
-                    st.plotly_chart(fig_cv, use_container_width=True)
+                    # 3. Faz merge com os dados de venda (Orçamento)
+                    df_vendidas = pd.read_sql_query("SELECT so, customer, SUM(horas_vendidas) as vendidas FROM projetos GROUP BY so, customer", engine)
+                    df_cv = pd.merge(df_consumo_historico, df_vendidas, on='so', how='inner')
+                    
+                    if not df_cv.empty:
+                        # 4. LÓGICA DE ORDENAÇÃO (O mais importante!): Maior Estouro de Orçamento primeiro
+                        df_cv['estouro_h'] = df_cv['horas_totais'] - df_cv['vendidas']
+                        df_cv = df_cv.sort_values(by='estouro_h', ascending=False).head(10)
+                        
+                        df_cv['label'] = df_cv.apply(lambda r: f"{r['so']} ({str(r['customer'])[:10]}...)" if pd.notna(r['customer']) else r['so'], axis=1)
+                        
+                        fig_cv = go.Figure()
+                        fig_cv.add_trace(go.Bar(x=df_cv['label'], y=df_cv['vendidas'], name='Orçamento (Vendidas)', marker_color='#28a745'))
+                        fig_cv.add_trace(go.Bar(x=df_cv['label'], y=df_cv['horas_totais'], name='Consumo Real Total', marker_color='#004a99'))
+                        
+                        fig_cv.update_layout(barmode='group', height=350, margin=dict(t=20, b=10, l=10, r=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+                        st.plotly_chart(fig_cv, use_container_width=True)
+                    else:
+                        st.info("Nenhum dado de orçamento encontrado para os projetos movimentados.")
                 else:
-                    st.info("Dados insuficientes para comparar orçamento nos projetos deste período.")
-
+                    st.info("Nenhum projeto foi movimentado no período selecionado.")
+                    
             with col_g2:
                 # Primeiro fazemos os cálculos
                 df_ret_linha = df_bi[df_bi['tipo'] == 'Retrabalho'].copy()
