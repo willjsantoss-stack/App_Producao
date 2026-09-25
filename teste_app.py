@@ -29,15 +29,25 @@ for p in [LOGO_DIR, PASTA_FOTOS]:
 # ==========================================
 # 2. BANCO DE DADOS (CORREÇÃO DEFINITIVA)
 # ==========================================
-# Agora o aplicativo vai ler a URL correta e estável do seu painel de Secrets
-DB_URL = st.secrets["DATABASE_URL"]
+# Lê a URL original do seu painel de Secrets
+RAW_DB_URL = st.secrets["DATABASE_URL"]
+
+# 1. Preparar a URL para a ligação direta (psycopg2)
+# Limpa qualquer prefixo moderno para o formato padrão aceite pelo psycopg2
+DB_URL_DIRECT = RAW_DB_URL.replace("postgresql+psycopg2://", "postgresql://")
+DB_URL_DIRECT = DB_URL_DIRECT.replace("postgresql+psycopg://", "postgresql://")
+DB_URL_DIRECT = DB_URL_DIRECT.replace("postgres://", "postgresql://")
+
+# 2. Preparar a URL para o SQLAlchemy (Pandas)
+# Força o SQLAlchemy a usar o motor exato que temos no requirements.txt
+DB_URL_ALCHEMY = DB_URL_DIRECT.replace("postgresql://", "postgresql+psycopg2://")
 
 # Engine para o Pandas (Usado nos DataFrames e abas de exportação)
-engine = create_engine(DB_URL)
+engine = create_engine(DB_URL_ALCHEMY)
 
 # Conexão global e cursor para o resto do app (essencial para as suas funções abaixo)
 try:
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(DB_URL_DIRECT)
     conn.autocommit = False
     cursor = conn.cursor()
 except Exception as e:
