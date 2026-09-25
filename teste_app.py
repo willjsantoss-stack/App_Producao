@@ -589,7 +589,7 @@ menu_selecionado = st.radio(
     "Navegação", 
     [
         "📝 Lançamentos", 
-        "🗂️ Kanban & Timeline", 
+        "📦 Materiais e Timeline", 
         "📋 Ordens de Produção",
         "📅 Planejamento de Carga",
         "📊 Dash. Projetos", 
