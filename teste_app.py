@@ -8,7 +8,7 @@ import calendar
 from PIL import Image
 import plotly.express as px
 import plotly.graph_objects as go
-import psycopg2
+import psycopg
 from sqlalchemy import create_engine
 import requests
 from io import BytesIO
