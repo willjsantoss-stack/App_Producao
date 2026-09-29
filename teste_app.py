@@ -3052,8 +3052,21 @@ elif menu_selecionado == "🔍 Manutenção":
                         if op_c in ["Itens Kanban", "Fáscias (Itens Ignorados)"]:
                             df_up['codigo'] = df_up['codigo'].astype(str).str.strip()
                             df_up = df_up.drop_duplicates(subset=['codigo'])
+                            
+                        # Filtro Inteligente para o Calendário (Ignora linhas vazias e evita colisões)
+                        if op_c == "Calendário Lucy":
+                            df_up = df_up.dropna(subset=['week']) # Apaga linhas vazias do Excel
+                            df_up['week'] = df_up['week'].astype(str).str.strip()
+                            df_up = df_up.drop_duplicates(subset=['week'])
+                            # Compara com o que já existe e descarta os repetidos
+                            existentes = pd.read_sql_query("SELECT week FROM calendario_lucy", engine)['week'].tolist()
+                            df_up = df_up[~df_up['week'].isin(existentes)]
                         
-                        df_up.to_sql(t_name, engine, if_exists='append', index=False)
+                        if not df_up.empty:
+                            df_up.to_sql(t_name, engine, if_exists='append', index=False)
+                            st.success(f"✔️ Carga de '{op_c}' concluída com sucesso no banco de dados!")
+                        else:
+                            st.warning(f"⚠️ Nenhum dado novo para importar em '{op_c}' (os registos já existem ou o ficheiro estava vazio).")
                         st.success(f"✔️ Carga de '{op_c}' concluída com sucesso no banco de dados!")
                         
                     except Exception as e:
