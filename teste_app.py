@@ -3026,47 +3026,40 @@ elif menu_selecionado == "🔍 Manutenção":
                     try:
                         df_up = pd.read_excel(f_xlsx)
                         
-                        # Limpa espaços em branco nos nomes das colunas da planilha para evitar erros
-                        df_up.columns = df_up.columns.str.strip()
-                        
-                        # Força o renomeio para o padrão do banco
+                        # 1. Força os nomes das colunas pela ordem esperada no ecrã (Como sempre foi)
                         df_up.columns = guias[op_c]
                         
+                        # 2. Formata as datas para o padrão do banco
                         if op_c in colunas_de_data:
                             df_up = formatar_datas_para_banco(df_up, colunas_de_data[op_c])
+                        
+                        # 3. Tesoura de Segurança (Isto resolve o erro ao importar com o banco vazio!)
+                        # Remove as linhas fantasmas/vazias que o Excel cria no final do arquivo
+                        if op_c == "Calendário Lucy":
+                            df_up = df_up.dropna(subset=['week'])
+                            df_up = df_up[df_up['week'].astype(str).str.strip() != '']
+                            df_up = df_up.drop_duplicates(subset=['week'])
+                            
+                        elif op_c in ["Itens Kanban", "Fáscias (Itens Ignorados)"]:
+                            df_up = df_up.dropna(subset=['codigo'])
+                            df_up = df_up[df_up['codigo'].astype(str).str.strip() != '']
+                            df_up = df_up.drop_duplicates(subset=['codigo'])
                         
                         target = {
                             "WOs/SOs": ("projetos", True), "Colaboradores": ("colaboradores", False), 
                             "Férias": ("ferias_colaboradores", False), "Calendário Lucy": ("calendario_lucy", False),
                             "Feriados": ("feriados", False), "Tipos de Erro": ("tipos_erro", False),
                             "Causadores de Erro": ("causadores_erro", False),
-                            "Itens Kanban": ("itens_kanban", False),                       # <--- MAPEAR TABELA
-                            "Fáscias (Itens Ignorados)": ("itens_ignorados_auditoria", False) # <--- MAPEAR TABELA
+                            "Itens Kanban": ("itens_kanban", False),                       
+                            "Fáscias (Itens Ignorados)": ("itens_ignorados_auditoria", False) 
                         }
                         
                         t_name, has_status = target[op_c]
                         if has_status: df_up['status_producao'] = 'Não iniciada'
                         if op_c == "WOs/SOs": df_up['item'] = ""
                         
-                        # Remove duplicatas da própria planilha antes de enviar (Previne erros do banco)
-                        if op_c in ["Itens Kanban", "Fáscias (Itens Ignorados)"]:
-                            df_up['codigo'] = df_up['codigo'].astype(str).str.strip()
-                            df_up = df_up.drop_duplicates(subset=['codigo'])
-                            
-                        # Filtro Inteligente para o Calendário (Ignora linhas vazias e evita colisões)
-                        if op_c == "Calendário Lucy":
-                            df_up = df_up.dropna(subset=['week']) # Apaga linhas vazias do Excel
-                            df_up['week'] = df_up['week'].astype(str).str.strip()
-                            df_up = df_up.drop_duplicates(subset=['week'])
-                            # Compara com o que já existe e descarta os repetidos
-                            existentes = pd.read_sql_query("SELECT week FROM calendario_lucy", engine)['week'].tolist()
-                            df_up = df_up[~df_up['week'].isin(existentes)]
-                        
-                        if not df_up.empty:
-                            df_up.to_sql(t_name, engine, if_exists='append', index=False)
-                            st.success(f"✔️ Carga de '{op_c}' concluída com sucesso no banco de dados!")
-                        else:
-                            st.warning(f"⚠️ Nenhum dado novo para importar em '{op_c}' (os registos já existem ou o ficheiro estava vazio).")
+                        # 4. Grava no banco de dados
+                        df_up.to_sql(t_name, engine, if_exists='append', index=False)
                         st.success(f"✔️ Carga de '{op_c}' concluída com sucesso no banco de dados!")
                         
                     except Exception as e:
