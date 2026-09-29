@@ -429,7 +429,8 @@ def padronizar_datas_para_tela(df, colunas):
 def formatar_datas_para_banco(df, colunas):
     for col in colunas:
         if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
+            # O dayfirst=True obriga o sistema a respeitar o formato Dia/Mês/Ano
+            df[col] = pd.to_datetime(df[col], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
             df[col] = df[col].fillna("")
     return df
 
