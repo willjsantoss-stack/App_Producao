@@ -1073,9 +1073,8 @@ if menu_selecionado == "📝 Lançamentos":
                                 conn.commit()
                                 st.success("✔️ Registro atualizado com sucesso!")
                                     
-                                # Limpa a memória das caixas de seleção
-                                if 'so_edit_sobra_sel' in st.session_state: del st.session_state['so_edit_sobra_sel']
-                                if 'item_edit_sobra_sel' in st.session_state: del st.session_state['item_edit_sobra_sel']
+                                # Envia o sinal para limpar as caixas na próxima volta
+                                st.session_state['sucesso_edit_sobra'] = True
                                     
                                 time_sys.sleep(1.5)
                                 st.rerun()
@@ -1085,9 +1084,8 @@ if menu_selecionado == "📝 Lançamentos":
                                 conn.commit()
                                 st.success("✔️ Registro excluído!")
                                 
-                                # Limpa a memória das caixas de seleção
-                                if 'so_edit_sobra_sel' in st.session_state: del st.session_state['so_edit_sobra_sel']
-                                if 'item_edit_sobra_sel' in st.session_state: del st.session_state['item_edit_sobra_sel']
+                                # Envia o sinal para limpar as caixas na próxima volta
+                                st.session_state['sucesso_edit_sobra'] = True
                                 
                                 time_sys.sleep(1.5)
                                 st.rerun()
@@ -2665,7 +2663,12 @@ elif menu_selecionado == "📦 Materiais e Timeline":
                             st.rerun()
 
             st.write("")
-            with st.expander("✏️ Editar ou Excluir Apontamento de Sobra"):
+            with st.expander("✏️️ Editar ou Excluir Apontamento de Sobra"):
+                # 1. Interceta o comando de limpeza e força o reset da primeira caixa
+                if st.session_state.get('sucesso_edit_sobra'):
+                    st.session_state['so_edit_sobra_sel'] = "- Selecione o Projeto -"
+                    st.session_state['sucesso_edit_sobra'] = False
+                
                 if not df_sobras.empty:
                     df_sos_com_sobra = df_sobras[['so', 'so_customer']].drop_duplicates()
                     lista_sos_edit = ["- Selecione o Projeto -"] + sorted([f"{r['so']} - {r['so_customer'] if pd.notna(r['so_customer']) else 'Sem Cliente'}" for _, r in df_sos_com_sobra.iterrows()])
