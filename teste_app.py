@@ -2492,11 +2492,21 @@ elif menu_selecionado == "📦 Materiais e Timeline":
             for d in ["Devolução Almoxarifado", "Sucata / Descarte", "Ajuste de BOM (Engenharia)"]:
                 cursor.execute("INSERT INTO destinacoes_sobra (destinacao) VALUES (%s)", (d,))
         conn.commit()
+        
+        # Script de Migração: Adicionar coluna de observação nas sobras
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'materiais_sobra'")
+        col_sob = [c[0] for c in cursor.fetchall()]
+        if 'observacao' not in col_sob:
+            try: 
+                cursor.execute("ALTER TABLE materiais_sobra ADD COLUMN observacao TEXT")
+                conn.commit()
+            except: 
+                conn.rollback()
+                
     except Exception:
         conn.rollback()
     # ----------------------------------------------
 
-    # <--- CRIANDO AS 3 ABAS PRINCIPAIS DIRETAMENTE
     tab_faltas, tab_sobras, tab_timeline = st.tabs(["⚠️ Controle de Faltas", "♻️ Apontamento de Sobras", "📈 Linha do Tempo (Timeline)"])
 
     # ==========================================
@@ -2595,8 +2605,9 @@ elif menu_selecionado == "📦 Materiais e Timeline":
     with tab_sobras:
         st.write("Registre os materiais excedentes durante a montagem para rastreio de custo e reavaliação de engenharia.")
         
+        # 1. Adicionado o campo 's.observacao' na Query
         df_sobras = pd.read_sql_query("""
-            SELECT s.id, s.so, s.codigo, s.descricao, s.quantidade, s.valor, s.destinacao, s.data_registro,
+            SELECT s.id, s.so, s.codigo, s.descricao, s.quantidade, s.valor, s.destinacao, s.observacao, s.data_registro,
                     p.customer as so_customer
             FROM materiais_sobra s
             LEFT JOIN (SELECT DISTINCT so, customer FROM projetos WHERE so IS NOT NULL) p ON s.so = p.so
@@ -2619,23 +2630,27 @@ elif menu_selecionado == "📦 Materiais e Timeline":
                     
                     c_qtd, c_val = st.columns(2)
                     qtd_sobra = c_qtd.number_input("Quantidade*", min_value=1, step=1)
-                    # ATUALIZADO: "Valor Unitário" ao invés de "Total"
                     val_sobra = c_val.number_input("Valor Unitário (R$)*", min_value=0.01, step=10.0)
                     
-                    dest_sobra = st.selectbox("Destinação / Justificativa*", ["- Selecione -"] + lista_destinacoes)
+                    dest_sobra = st.selectbox("Destinação / Categoria*", ["- Selecione -"] + lista_destinacoes)
+                    
+                    # 2. NOVO CAMPO OBRIGATÓRIO AQUI
+                    obs_sobra = st.text_area("Motivo Detalhado / Observação*", help="Explique detalhadamente porque sobrou (Erro de separação, Ajuste de BOM, Quebra, etc.)")
                     
                     submit_sobra = st.form_submit_button("💾 Registrar Sobra", type="primary", use_container_width=True)
                     
                     if submit_sobra:
-                        if not cod_sobra or not desc_sobra or qtd_sobra <= 0 or val_sobra <= 0 or projeto_sel_sobra == "- Nenhum projeto ativo -" or dest_sobra == "- Selecione -":
-                            st.error("❌ Preencha todos os campos obrigatórios (Quantidade e Valor devem ser maiores que zero)!")
+                        # 3. Adicionada a validação do novo campo
+                        if not cod_sobra or not desc_sobra or qtd_sobra <= 0 or val_sobra <= 0 or projeto_sel_sobra == "- Nenhum projeto ativo -" or dest_sobra == "- Selecione -" or not obs_sobra.strip():
+                            st.error("❌ Preencha todos os campos obrigatórios (incluindo o Motivo Detalhado)!")
                         else:
                             so_ext_sobra = projeto_sel_sobra.split(" - ")[0].strip()
                             
+                            # 4. Inserção no banco com a observação
                             cursor.execute("""
-                                INSERT INTO materiais_sobra (so, codigo, descricao, quantidade, valor, destinacao, data_registro)
-                                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')
-                            """, (so_ext_sobra, cod_sobra.strip(), desc_sobra.strip(), qtd_sobra, val_sobra, dest_sobra))
+                                INSERT INTO materiais_sobra (so, codigo, descricao, quantidade, valor, destinacao, observacao, data_registro)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')
+                            """, (so_ext_sobra, cod_sobra.strip(), desc_sobra.strip(), qtd_sobra, val_sobra, dest_sobra, obs_sobra.strip()))
                             conn.commit()
                             st.success("✔️ Sobra de material registrada com sucesso!")
                             time_sys.sleep(1.5)
@@ -2677,22 +2692,26 @@ elif menu_selecionado == "📦 Materiais e Timeline":
                                 idx_dest = 0
                                 
                             c_e3, c_e4 = st.columns(2)
-                            # ATUALIZADO: "Valor Unitário"
                             edit_val = c_e3.number_input("Valor Unitário (R$)", value=float(row_sobra['valor']), min_value=0.0, step=10.0, key="ed_val_sobra")
                             edit_dest = c_e4.selectbox("Destinação", list_dest_edit, index=idx_dest, key="ed_dest_sobra")
+                            
+                            # 5. Adicionado o campo de edição da observação
+                            obs_atual = row_sobra['observacao'] if 'observacao' in row_sobra and pd.notna(row_sobra['observacao']) else ""
+                            edit_obs = st.text_area("Motivo Detalhado / Observação", value=obs_atual, key="ed_obs_sobra")
                             
                             st.write("")
                             c_btn_e1, c_btn_e2 = st.columns([1, 1])
                             
                             if c_btn_e1.button("💾 Salvar Alterações", type="primary", use_container_width=True):
-                                if not edit_cod or not edit_desc:
-                                    st.error("O Código e a Descrição não podem ficar em branco.")
+                                if not edit_cod or not edit_desc or not edit_obs.strip():
+                                    st.error("Código, Descrição e Observação não podem ficar em branco.")
                                 else:
+                                    # 6. Grava a alteração da observação no banco
                                     cursor.execute("""
                                         UPDATE materiais_sobra 
-                                        SET codigo=%s, descricao=%s, quantidade=%s, valor=%s, destinacao=%s 
+                                        SET codigo=%s, descricao=%s, quantidade=%s, valor=%s, destinacao=%s, observacao=%s 
                                         WHERE id=%s
-                                    """, (edit_cod.strip(), edit_desc.strip(), edit_qtd, edit_val, edit_dest, id_edit))
+                                    """, (edit_cod.strip(), edit_desc.strip(), edit_qtd, edit_val, edit_dest, edit_obs.strip(), id_edit))
                                     conn.commit()
                                     st.success("✔️ Registro atualizado com sucesso!")
                                     time_sys.sleep(1.5)
@@ -2774,10 +2793,10 @@ elif menu_selecionado == "📦 Materiais e Timeline":
                     cols_rename = {
                         'so': 'SO', 'so_customer': 'Cliente', 'codigo': 'Código', 'descricao': 'Descrição',
                         'quantidade': 'Qtd', 'v_unit_str': 'V. Unitário', 'v_total_str': 'Custo Total', 
-                        'destinacao': 'Destinação', 'data_registro': 'Data'
+                        'destinacao': 'Destinação', 'observacao': 'Motivo Detalhado', 'data_registro': 'Data'
                     }
                     
-                    st.dataframe(df_sobras_view[['so', 'so_customer', 'codigo', 'descricao', 'quantidade', 'v_unit_str', 'v_total_str', 'destinacao', 'data_registro']].rename(columns=cols_rename), width="stretch", hide_index=True)
+                    st.dataframe(df_sobras_view[['so', 'so_customer', 'codigo', 'descricao', 'quantidade', 'v_unit_str', 'v_total_str', 'destinacao', 'observacao', 'data_registro']].rename(columns=cols_rename), width="stretch", hide_index=True)
                 else:
                     st.warning("Nenhum dado encontrado para os filtros aplicados.")
             else:
