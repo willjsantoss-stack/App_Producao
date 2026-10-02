@@ -2478,11 +2478,6 @@ elif menu_selecionado == "📅 Planejamento de Carga":
 # ------------------------------------------
 elif menu_selecionado == "📦 Materiais e Timeline":
     
-    # Botão de Sincronização Manual alinhado à direita
-    _, c_btn = st.columns([5, 1])
-    if c_btn.button("🔄 Sincronizar Tela", type="primary", use_container_width=True, help="Puxar as últimas alterações feitas por outros usuários."):
-        st.rerun()
-    
     # --- REGRA DE 30 DIAS BLINDADA (Ignora finalizados sem data) ---
     query_so_ativas = """
         SELECT DISTINCT p.so, p.customer 
