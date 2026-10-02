@@ -1059,8 +1059,8 @@ if menu_selecionado == "📝 Lançamentos":
                         
                         st.write("")
                         c_btn_e1, c_btn_e2 = st.columns([1, 1])
-                        
-                        if c_btn_e1.button("💾 Salvar Alterações", type="primary", use_container_width=True):
+                            
+                            if c_btn_e1.button("💾 Salvar Alterações", type="primary", use_container_width=True):
                                 if not edit_cod or not edit_desc or not edit_obs.strip():
                                     st.error("Código, Descrição e Observação não podem ficar em branco.")
                                 else:
@@ -1080,17 +1080,17 @@ if menu_selecionado == "📝 Lançamentos":
                                     time_sys.sleep(1.5)
                                     st.rerun()
                                     
-                        if c_btn_e2.button("🗑️ Excluir Registro", use_container_width=True):
-                            cursor.execute("DELETE FROM materiais_sobra WHERE id=%s", (id_edit,))
-                            conn.commit()
-                            st.success("✔️ Registro excluído!")
+                            if c_btn_e2.button("🗑️ Excluir Registro", use_container_width=True):
+                                cursor.execute("DELETE FROM materiais_sobra WHERE id=%s", (id_edit,))
+                                conn.commit()
+                                st.success("✔️ Registro excluído!")
                                 
-                            # Limpa a memória das caixas de seleção
-                            if 'so_edit_sobra_sel' in st.session_state: del st.session_state['so_edit_sobra_sel']
-                            if 'item_edit_sobra_sel' in st.session_state: del st.session_state['item_edit_sobra_sel']
+                                # Limpa a memória das caixas de seleção
+                                if 'so_edit_sobra_sel' in st.session_state: del st.session_state['so_edit_sobra_sel']
+                                if 'item_edit_sobra_sel' in st.session_state: del st.session_state['item_edit_sobra_sel']
                                 
-                            time_sys.sleep(1.5)
-                            st.rerun()
+                                time_sys.sleep(1.5)
+                                st.rerun()
                             
                     else:
                         st.error("Apontamento não encontrado no banco de dados.")
