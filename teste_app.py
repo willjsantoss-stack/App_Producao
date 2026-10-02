@@ -1059,36 +1059,26 @@ if menu_selecionado == "📝 Lançamentos":
                         
                         st.write("")
                         c_btn_e1, c_btn_e2 = st.columns([1, 1])
-                            
+                        
                         if c_btn_e1.button("💾 Salvar Alterações", type="primary", use_container_width=True):
-                            if not edit_cod or not edit_desc or not edit_obs.strip():
-                                st.error("Código, Descrição e Observação não podem ficar em branco.")
-                            else:
-                                # Grava a alteração da observação no banco
-                                cursor.execute("""
-                                    UPDATE materiais_sobra 
-                                    SET codigo=%s, descricao=%s, quantidade=%s, valor=%s, destinacao=%s, observacao=%s 
-                                    WHERE id=%s
-                                """, (edit_cod.strip(), edit_desc.strip(), edit_qtd, edit_val, edit_dest, edit_obs.strip(), id_edit))
-                                conn.commit()
-                                st.success("✔️ Registro atualizado com sucesso!")
-                                    
-                                # Envia o sinal para limpar as caixas na próxima volta
-                                st.session_state['sucesso_edit_sobra'] = True
-                                    
-                                time_sys.sleep(1.5)
-                                st.rerun()
-                                    
-                            if c_btn_e2.button("🗑️ Excluir Registro", use_container_width=True):
-                                cursor.execute("DELETE FROM materiais_sobra WHERE id=%s", (id_edit,))
-                                conn.commit()
-                                st.success("✔️ Registro excluído!")
-                                
-                                # Envia o sinal para limpar as caixas na próxima volta
-                                st.session_state['sucesso_edit_sobra'] = True
-                                
-                                time_sys.sleep(1.5)
-                                st.rerun()
+                            # Atualiza a Query gravando todas as variações possíveis
+                            cursor.execute(
+                                "UPDATE apontamentos SET hora_inicio=%s, hora_fim=%s, descricao=%s, tipo_erro=%s, causador_erro=%s, atividade=%s WHERE id=%s", 
+                                (str(hi_edit), str(hf_edit), nova_obs, novo_tipo_erro, novo_causador, nova_atividade, id_apont)
+                            )
+                            conn.commit()
+                            recalcular_dia(conn, row_apont['matricula'], data_br_edit)
+                            st.success("✔️ Apontamento atualizado com sucesso!")
+                            time_sys.sleep(1.5)
+                            st.rerun()
+                            
+                        if c_btn_e2.button("🗑️ Excluir Apontamento", use_container_width=True):
+                            cursor.execute("DELETE FROM apontamentos WHERE id=%s", (id_apont,))
+                            conn.commit()
+                            recalcular_dia(conn, row_apont['matricula'], data_br_edit)
+                            st.success("✔️ Apontamento excluído da base e auditoria reprocessada!")
+                            time_sys.sleep(1.5)
+                            st.rerun()
                             
                     else:
                         st.error("Apontamento não encontrado no banco de dados.")
@@ -2717,7 +2707,7 @@ elif menu_selecionado == "📦 Materiais e Timeline":
                                 if not edit_cod or not edit_desc or not edit_obs.strip():
                                     st.error("Código, Descrição e Observação não podem ficar em branco.")
                                 else:
-                                    # 6. Grava a alteração da observação no banco
+                                    # Grava a alteração da observação no banco
                                     cursor.execute("""
                                         UPDATE materiais_sobra 
                                         SET codigo=%s, descricao=%s, quantidade=%s, valor=%s, destinacao=%s, observacao=%s 
@@ -2725,6 +2715,10 @@ elif menu_selecionado == "📦 Materiais e Timeline":
                                     """, (edit_cod.strip(), edit_desc.strip(), edit_qtd, edit_val, edit_dest, edit_obs.strip(), id_edit))
                                     conn.commit()
                                     st.success("✔️ Registro atualizado com sucesso!")
+                                    
+                                    # Envia o sinal para limpar as caixas na próxima volta
+                                    st.session_state['sucesso_edit_sobra'] = True
+                                    
                                     time_sys.sleep(1.5)
                                     st.rerun()
                                     
@@ -2732,6 +2726,10 @@ elif menu_selecionado == "📦 Materiais e Timeline":
                                 cursor.execute("DELETE FROM materiais_sobra WHERE id=%s", (id_edit,))
                                 conn.commit()
                                 st.success("✔️ Registro excluído!")
+                                
+                                # Envia o sinal para limpar as caixas na próxima volta
+                                st.session_state['sucesso_edit_sobra'] = True
+                                
                                 time_sys.sleep(1.5)
                                 st.rerun()
                 else:
