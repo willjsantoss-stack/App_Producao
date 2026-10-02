@@ -13,6 +13,10 @@ from sqlalchemy import create_engine
 import requests
 from io import BytesIO
 from supabase import create_client, Client
+import matplotlib
+matplotlib.use('Agg') # Força o modo de servidor (Thread-Safe)
+import matplotlib.pyplot as plt
+import numpy as np
 
 # ==========================================
 # 1. CONFIGURAÇÕES E DIRETÓRIOS
@@ -63,7 +67,6 @@ key_supa = st.secrets["SUPABASE_KEY"]
 supabase_client: Client = create_client(url_supa, key_supa)
 
 # Função que empacota a criação das tabelas para não dar o NameError
-# Função que empacota a criação das tabelas para não dar o NameError
 def init_db():
     # ⚡ MÁGICA AQUI: Ativa o processamento isolado para o banco não travar!
     conn.autocommit = True 
@@ -81,6 +84,31 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS banco_horas_log (id SERIAL PRIMARY KEY, matricula TEXT, data TEXT, horas_delta NUMERIC, operacao TEXT, justificativa TEXT)')
     cursor.execute('CREATE TABLE IF NOT EXISTS parametros_jornada (id SERIAL PRIMARY KEY, data_inicio TEXT, data_fim TEXT, carga_seg_qui NUMERIC, carga_sexta NUMERIC, hora_saida_seg_qui TEXT, hora_saida_sexta TEXT)')
     cursor.execute('CREATE TABLE IF NOT EXISTS planejamento (id SERIAL PRIMARY KEY, data_planejada TEXT, matricula TEXT, so TEXT, wo TEXT, unidade TEXT DEFAULT \'Geral\', horas_planejadas NUMERIC)')
+    # --- TABELAS DE SOBRAS DE MATERIAL ---
+    cursor.execute('CREATE TABLE IF NOT EXISTS destinacoes_sobra (destinacao TEXT PRIMARY KEY)')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS materiais_sobra (
+            id SERIAL PRIMARY KEY,
+            so TEXT,
+            codigo TEXT,
+            descricao TEXT,
+            quantidade INTEGER,
+            valor NUMERIC,
+            destinacao TEXT,
+            data_registro TIMESTAMP
+        )
+    ''')
+    cursor.execute("SELECT COUNT(*) FROM destinacoes_sobra")
+    if cursor.fetchone()[0] == 0:
+        for d in ["Devolução Almoxarifado", "Sucata / Descarte", "Ajuste de BOM (Engenharia)"]:
+            cursor.execute("INSERT INTO destinacoes_sobra (destinacao) VALUES (%s)", (d,))
+    
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'materiais_sobra'")
+    col_sob = [c[0] for c in cursor.fetchall()]
+    if 'observacao' not in col_sob:
+        try: cursor.execute("ALTER TABLE materiais_sobra ADD COLUMN observacao TEXT")
+        except: pass
+
     # 1. Configurações de Custos Globais (HH e OH)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS parametros_custos (
@@ -515,44 +543,49 @@ with st.sidebar:
         st.write("Exporte os apontamentos para cruzar com o relatório do RH.")
         tipo_ext = st.radio("Período:", ["Mês Atual", "Mês Anterior", "Semana Atual"])
         
-        df_ponto = pd.read_sql_query("""
-            SELECT a.data_registro as "Data", a.matricula as "Matricula", a.operador as "Operador", 
-                   COALESCE(a.linha, c.linha) as "Linha Atuação", a.hora_inicio as "Inicio", a.hora_fim as "Fim", 
-                   a.horas_normais as "Normais(h)", a.he_50 as "HE50(h)", a.he_100 as "HE100(h)", a.saldo_bh as "Banco(h)",
-                   a.tipo as "Tipo", a.atividade as "Atividade", a.so as "SO", a.customer as "Cliente", a.wo as "WO", a.product_name as "Produto", 
-                   a.unidade as "Unidade", a.descricao as "Observacoes"
-            FROM apontamentos a
-            LEFT JOIN colaboradores c ON a.matricula = c.matricula
-        """, engine)
-        
-        df_ponto['data_dt'] = pd.to_datetime(df_ponto['Data'], format='%d/%m/%Y', errors='coerce')
-        
-        hoje_ponto = date.today()
-        if tipo_ext == "Mês Atual":
-            df_fil = df_ponto[(df_ponto['data_dt'].dt.year == hoje_ponto.year) & (df_ponto['data_dt'].dt.month == hoje_ponto.month)]
-            arq_nome = f"Conferencia_Ponto_Mensal_{hoje_ponto.strftime('%m_%Y')}.xlsx"
-        elif tipo_ext == "Mês Anterior":
-            primeiro_dia_mes_atual = hoje_ponto.replace(day=1)
-            mes_ant = primeiro_dia_mes_atual - timedelta(days=1)
-            df_fil = df_ponto[(df_ponto['data_dt'].dt.year == mes_ant.year) & (df_ponto['data_dt'].dt.month == mes_ant.month)]
-            arq_nome = f"Conferencia_Ponto_Mes_Anterior_{mes_ant.strftime('%m_%Y')}.xlsx"
-        else:
-            start_week = hoje_ponto - timedelta(days=hoje_ponto.weekday())
-            end_week = start_week + timedelta(days=6)
-            df_fil = df_ponto[(df_ponto['data_dt'].dt.date >= start_week) & (df_ponto['data_dt'].dt.date <= end_week)]
-            arq_nome = f"Conferencia_Ponto_Semanal_{start_week.strftime('%d%m')}_a_{end_week.strftime('%d%m')}.xlsx"
-            
-        if not df_fil.empty:
-            df_fil = df_fil.sort_values(by=['Operador', 'data_dt', 'Inicio'])
-            df_fil = df_fil.drop(columns=['data_dt']) 
-            
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_fil.to_excel(writer, index=False, sheet_name='Ponto')
-            
-            st.download_button(label="📥 Baixar Excel do Ponto", data=output.getvalue(), file_name=arq_nome, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
-        else:
-            st.info("Nenhum apontamento registrado neste período.")
+        # Só vai ao banco de dados se o utilizador clicar para gerar
+        if st.button("🔄 Processar Dados de Ponto", use_container_width=True):
+            with st.spinner("Extraindo dados..."):
+                df_ponto = pd.read_sql_query("""
+                    SELECT a.data_registro as "Data", a.matricula as "Matricula", a.operador as "Operador", 
+                           COALESCE(a.linha, c.linha) as "Linha Atuação", a.hora_inicio as "Inicio", a.hora_fim as "Fim", 
+                           a.horas_normais as "Normais(h)", a.he_50 as "HE50(h)", a.he_100 as "HE100(h)", a.saldo_bh as "Banco(h)",
+                           a.tipo as "Tipo", a.atividade as "Atividade", a.so as "SO", a.customer as "Cliente", a.wo as "WO", a.product_name as "Produto", 
+                           a.unidade as "Unidade", a.descricao as "Observacoes"
+                    FROM apontamentos a
+                    LEFT JOIN colaboradores c ON a.matricula = c.matricula
+                """, engine)
+                
+                df_ponto['data_dt'] = pd.to_datetime(df_ponto['Data'], format='%d/%m/%Y', errors='coerce')
+                
+                hoje_ponto = date.today()
+                if tipo_ext == "Mês Atual":
+                    df_fil = df_ponto[(df_ponto['data_dt'].dt.year == hoje_ponto.year) & (df_ponto['data_dt'].dt.month == hoje_ponto.month)]
+                    arq_nome = f"Conferencia_Ponto_Mensal_{hoje_ponto.strftime('%m_%Y')}.xlsx"
+                elif tipo_ext == "Mês Anterior":
+                    primeiro_dia_mes_atual = hoje_ponto.replace(day=1)
+                    mes_ant = primeiro_dia_mes_atual - timedelta(days=1)
+                    df_fil = df_ponto[(df_ponto['data_dt'].dt.year == mes_ant.year) & (df_ponto['data_dt'].dt.month == mes_ant.month)]
+                    arq_nome = f"Conferencia_Ponto_Mes_Anterior_{mes_ant.strftime('%m_%Y')}.xlsx"
+                else:
+                    start_week = hoje_ponto - timedelta(days=hoje_ponto.weekday())
+                    end_week = start_week + timedelta(days=6)
+                    df_fil = df_ponto[(df_ponto['data_dt'].dt.date >= start_week) & (df_ponto['data_dt'].dt.date <= end_week)]
+                    arq_nome = f"Conferencia_Ponto_Semanal_{start_week.strftime('%d%m')}_a_{end_week.strftime('%d%m')}.xlsx"
+                    
+                if not df_fil.empty:
+                    df_fil = df_fil.sort_values(by=['Operador', 'data_dt', 'Inicio']).drop(columns=['data_dt']) 
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_fil.to_excel(writer, index=False, sheet_name='Ponto')
+                    
+                    st.session_state['excel_ponto_pronto'] = output.getvalue()
+                    st.session_state['excel_ponto_nome'] = arq_nome
+                else:
+                    st.warning("Nenhum apontamento registrado neste período.")
+                    
+        if 'excel_ponto_pronto' in st.session_state:
+            st.download_button(label="📥 Baixar Excel Processado", data=st.session_state['excel_ponto_pronto'], file_name=st.session_state['excel_ponto_nome'], mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
 
 # ==========================================
 # 5. DETECÇÃO DE PAPEL (SECURITY RBAC)
@@ -805,15 +838,18 @@ if menu_selecionado == "📝 Lançamentos":
                             nome_depois = f"{timestamp}_{so_id_db}_DEPOIS.jpg"
                             
                             # 1. Faz o upload da foto em bytes direto para o seu Bucket
+                            tipo_mime_antes = "image/png" if foto_antes.name.lower().endswith('.png') else "image/jpeg"
                             supabase_client.storage.from_("fotos_retrabalho").upload(
                                 file=foto_antes.getvalue(), 
                                 path=nome_antes, 
-                                file_options={"content-type": "image/jpeg"}
+                                file_options={"content-type": tipo_mime_antes}
                             )
+                            
+                            tipo_mime_depois = "image/png" if foto_depois.name.lower().endswith('.png') else "image/jpeg"
                             supabase_client.storage.from_("fotos_retrabalho").upload(
                                 file=foto_depois.getvalue(), 
                                 path=nome_depois, 
-                                file_options={"content-type": "image/jpeg"}
+                                file_options={"content-type": tipo_mime_depois}
                             )
                             
                             # 2. Pega a URL pública permanente gerada pelo Supabase
@@ -2057,7 +2093,8 @@ elif menu_selecionado == "📅 Planejamento de Carga":
             st.warning(f"⚠️ Atenção: Detectamos choque de agenda para {', '.join(set(nomes_alerta))}. Há mais de uma ordem planejada para o mesmo dia, as barras aparecerão sobrepostas para indicar o conflito.")
 
         df_gantt_raw['Primeiro_Nome'] = df_gantt_raw['operador'].apply(lambda x: str(x).split()[0] if pd.notna(x) else "")
-        df_gantt_raw['data_dt'] = pd.to_datetime(df_gantt_raw['data_planejada'])
+        df_gantt_raw['data_dt'] = pd.to_datetime(df_gantt_raw['data_planejada'], errors='coerce')
+        df_gantt_raw = df_gantt_raw.dropna(subset=['data_dt']) # Limpa erros antes de desenhar
         df_gantt_raw['linha'] = df_gantt_raw['linha'].fillna("Sem Setor Cadastrado")
         
         df_gant = df_gantt_raw.groupby(['operador', 'Primeiro_Nome', 'linha', 'so', 'wo', 'unidade']).agg(
@@ -2470,42 +2507,6 @@ elif menu_selecionado == "📦 Materiais e Timeline":
             opcoes_projetos.append(f"{r['so']} - {cliente}")
     else:
         opcoes_projetos = ["- Nenhum projeto ativo -"]
-
-    # --- CRIAÇÃO DAS TABELAS DE SOBRA AUTOMÁTICA (Fora das Abas) ---
-    try:
-        cursor.execute('CREATE TABLE IF NOT EXISTS destinacoes_sobra (destinacao TEXT PRIMARY KEY)')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS materiais_sobra (
-                id SERIAL PRIMARY KEY,
-                so TEXT,
-                codigo TEXT,
-                descricao TEXT,
-                quantidade INTEGER,
-                valor NUMERIC,
-                destinacao TEXT,
-                data_registro TIMESTAMP
-            )
-        ''')
-        # Popula algumas destinações iniciais se estiver vazio
-        cursor.execute("SELECT COUNT(*) FROM destinacoes_sobra")
-        if cursor.fetchone()[0] == 0:
-            for d in ["Devolução Almoxarifado", "Sucata / Descarte", "Ajuste de BOM (Engenharia)"]:
-                cursor.execute("INSERT INTO destinacoes_sobra (destinacao) VALUES (%s)", (d,))
-        conn.commit()
-        
-        # Script de Migração: Adicionar coluna de observação nas sobras
-        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'materiais_sobra'")
-        col_sob = [c[0] for c in cursor.fetchall()]
-        if 'observacao' not in col_sob:
-            try: 
-                cursor.execute("ALTER TABLE materiais_sobra ADD COLUMN observacao TEXT")
-                conn.commit()
-            except: 
-                conn.rollback()
-                
-    except Exception:
-        conn.rollback()
-    # ----------------------------------------------
 
     tab_faltas, tab_sobras, tab_timeline = st.tabs(["⚠️ Controle de Faltas", "♻️ Apontamento de Sobras", "📈 Linha do Tempo (Timeline)"])
 
@@ -4185,8 +4186,6 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
                     from reportlab.lib import colors
                     from io import BytesIO
-                    import matplotlib.pyplot as plt
-                    import numpy as np
                     
                     pdf_buffer = BytesIO()
                     doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -4358,6 +4357,8 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     fig_pdf.savefig(buf_p, format='png', dpi=300, bbox_inches='tight')
                     buf_p.seek(0)
                     plt.close(fig_pdf)
+                    plt.clf() # Limpa a figura atual da memória
+                    plt.cla() # Limpa os eixos
                     
                     story.append(RLImage(buf_p, width=520, height=416))
                     story.append(PageBreak())
