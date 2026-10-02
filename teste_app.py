@@ -2635,7 +2635,7 @@ elif menu_selecionado == "📦 Materiais e Timeline":
                     
                     dest_sobra = st.selectbox("Destinação / Categoria*", ["- Selecione -"] + lista_destinacoes)
                     
-                    # 2. NOVO CAMPO OBRIGATÓRIO AQUI
+                    # --- ESTE É O CAMPO QUE FALTAVA ---
                     obs_sobra = st.text_area("Motivo Detalhado / Observação*", help="Explique detalhadamente porque sobrou (Erro de separação, Ajuste de BOM, Quebra, etc.)")
                     
                     submit_sobra = st.form_submit_button("💾 Registrar Sobra", type="primary", use_container_width=True)
