@@ -1956,19 +1956,33 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                     
                     if so_replan_full != "- Selecione -":
                         so_replan = so_replan_full.split(" - ")[0].strip()
+                        
+                        # --- NOVO: Botão para limpar a SO inteira de uma vez ---
+                        st.write("")
+                        if st.button(f"🚨 Excluir TODO o Planejamento do Projeto ({so_replan})", type="primary", use_container_width=True):
+                            cursor.execute("DELETE FROM planejamento WHERE so = %s", (so_replan,))
+                            conn.commit()
+                            st.success(f"O planejamento completo da SO {so_replan} foi excluído!")
+                            time_sys.sleep(1.5)
+                            st.rerun()
+                            
+                        st.markdown("---")
+                        st.write("**Ou apague apenas partes específicas:**")
+                        # -------------------------------------------------------
+
                         df_wos_replan = wos_com_plano[wos_com_plano['so'] == so_replan]
                         wos_list_formatada = ["- Selecione -"] + [f"{r['wo']} - {r['product_name'] if pd.notna(r['product_name']) else 'Desconhecido'} | Unidade: {r['unidade']}" for _, r in df_wos_replan.iterrows()]
                         
                         wo_und_replan = st.selectbox("2. Selecione a WO e Unidade para excluir:", wos_list_formatada, key="wo_und_replan")
                         
                         if wo_und_replan != "- Selecione -":
-                            if st.button("🗑️ Excluir Cronograma do Período", width="content"):
+                            if st.button("🗑️ Excluir Apenas Esta Alocação", use_container_width=True):
                                 parte_esq, parte_dir = wo_und_replan.split(" | Unidade: ")
                                 wo_excluir = parte_esq.split(" - ")[0].strip()
                                 und_excluir = parte_dir.strip()
                                 cursor.execute("DELETE FROM planejamento WHERE wo = %s AND unidade = %s", (wo_excluir, und_excluir))
                                 conn.commit()
-                                st.success("Planejamento excluído! A WO voltou para a lista de pendentes.")
+                                st.success("Planejamento específico excluído! A WO voltou para a lista de pendentes.")
                                 time_sys.sleep(1.5)
                                 st.rerun()
                 else:
