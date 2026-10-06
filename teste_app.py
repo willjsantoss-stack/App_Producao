@@ -1946,6 +1946,7 @@ elif menu_selecionado == "📅 Planejamento de Carga":
                     SELECT DISTINCT pl.so, pl.wo, pl.unidade, p.product_name, p.customer
                     FROM planejamento pl
                     LEFT JOIN projetos p ON pl.wo = p.wo
+                    WHERE UPPER(TRIM(p.status_producao)) != 'FINALIZADO' OR p.status_producao IS NULL
                 """, engine)
                 
                 if not wos_com_plano.empty:
