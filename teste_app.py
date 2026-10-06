@@ -159,7 +159,21 @@ def init_db():
             motivo TEXT PRIMARY KEY
         )
     ''')
-    
+
+    # Tabela de Categorias de Produto
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS categorias_produto (
+            categoria TEXT PRIMARY KEY
+        )
+    ''')
+
+    # Preenche com as suas categorias iniciais automaticamente
+    cursor.execute("SELECT COUNT(*) FROM categorias_produto")
+    if cursor.fetchone()[0] == 0:
+        default_cats = ["SmartClad", "AegisPlus L", "AegisPlus V", "AegisPlus C", "Aegis36 1W", "Aegis36 2W", "Aegis36 3W", "Aegis36 TopEx", "SmartCom"]
+        for c in default_cats:
+            cursor.execute("INSERT INTO categorias_produto (categoria) VALUES (%s) ON CONFLICT (categoria) DO NOTHING", (c,))
+        
     # Insere as opções padrão se a tabela estiver vazia
     cursor.execute("SELECT COUNT(*) FROM motivos_auditoria")
     if cursor.fetchone()[0] == 0:
@@ -251,6 +265,10 @@ def init_db():
         except: pass
     if 'linha' not in col_proj:
         try: cursor.execute("ALTER TABLE projetos ADD COLUMN linha TEXT")
+        except: pass
+    # ---- ADICIONE ISTO AQUI: ----
+    if 'categoria_produto' not in col_proj:
+        try: cursor.execute("ALTER TABLE projetos ADD COLUMN categoria_produto TEXT")
         except: pass
 
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'planejamento'")
@@ -1671,38 +1689,45 @@ elif menu_selecionado == "📋 Ordens de Produção":
             with st.expander("➕ Cadastrar Nova SO/WO", expanded=True):
                 linhas_disponiveis = pd.read_sql_query("SELECT DISTINCT linha FROM colaboradores WHERE linha IS NOT NULL AND linha != ''", engine)['linha'].tolist()
                 
+                df_categorias = pd.read_sql_query("SELECT categoria FROM categorias_produto ORDER BY categoria", engine)
+                cats_disponiveis = df_categorias['categoria'].tolist() if not df_categorias.empty else []
+                
                 with st.form("form_nova_wo", clear_on_submit=True):
                     so_n = st.text_input("Sales Order (SO)*")
                     wo_n = st.text_input("Work Order (WO) - Deixe em branco para Reserva de Slot")
                     item_n = st.text_input("Item (Opcional)") 
-                    linha_n = st.selectbox("Linha de Produção Predominante*", ["- Selecione -"] + linhas_disponiveis)
+                    
+                    c_lin, c_cat = st.columns(2)
+                    linha_n = c_lin.selectbox("Linha de Produção Predominante*", ["- Selecione -"] + linhas_disponiveis)
+                    cat_n = c_cat.selectbox("Categoria de Produto*", ["- Selecione -"] + cats_disponiveis)
+                    
                     cli_n = st.text_input("Cliente*")
                     prod_n = st.text_input("Nome do Produto / Descrição da Reserva*")
                     
-                    qtd_n = st.number_input("Quantidade*", min_value=1, step=1)
-                    hr_ven = st.number_input("Horas Vendidas / Estimadas*", min_value=0.0, step=0.5, value=0.0)
+                    c_qtd, c_hr = st.columns(2)
+                    qtd_n = c_qtd.number_input("Quantidade*", min_value=1, step=1)
+                    hr_ven = c_hr.number_input("Horas Vendidas / Estimadas*", min_value=0.0, step=0.5, value=0.0)
                     
                     if st.form_submit_button("💾 Criar Ordem / Reserva", type="primary", width="content"):
-                        if not so_n or not cli_n or not prod_n or linha_n == "- Selecione -" or hr_ven <= 0:
+                        if not so_n or not cli_n or not prod_n or linha_n == "- Selecione -" or cat_n == "- Selecione -" or hr_ven <= 0:
                             st.error("❌ Preencha os campos obrigatórios (*). As Horas Vendidas/Estimadas devem ser maiores que zero.")
                         else:
-                            # MÁGICA AQUI: Gera WO temporária se ficar em branco e define status especial
                             is_reserva = not wo_n.strip()
                             wo_final = f"RES-{int(time_sys.time() % 100000)}" if is_reserva else wo_n.strip()
                             item_final = "-" if not item_n.strip() else item_n.strip()
                             status_inicial = "Reserva Estratégica" if is_reserva else "Não iniciada"
                             
                             cursor.execute("""
-                                INSERT INTO projetos (so, wo, linha, customer, item, product_name, qtde, status_producao, horas_vendidas) 
-                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                            """, (so_n.strip(), wo_final, linha_n, cli_n.strip(), item_final, prod_n.strip(), qtd_n, status_inicial, hr_ven))
+                                INSERT INTO projetos (so, wo, linha, categoria_produto, customer, item, product_name, qtde, status_producao, horas_vendidas) 
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            """, (so_n.strip(), wo_final, linha_n, cat_n, cli_n.strip(), item_final, prod_n.strip(), qtd_n, status_inicial, hr_ven))
                             conn.commit()
                             st.success(f"✔️ {'Reserva de Slot' if is_reserva else 'Ordem de Produção'} registrada com sucesso!")
                             st.rerun()
 
         with col_ord2:
             with st.expander("✏️ Gerenciar / Atualizar Ordem", expanded=True):
-                df_status_edit = pd.read_sql_query("SELECT so, wo, customer, item, product_name, qtde, horas_vendidas, status_producao FROM projetos WHERE UPPER(TRIM(status_producao)) != 'FINALIZADO' OR status_producao IS NULL", engine)
+                df_status_edit = pd.read_sql_query("SELECT so, wo, customer, item, product_name, qtde, horas_vendidas, status_producao, categoria_produto FROM projetos WHERE UPPER(TRIM(status_producao)) != 'FINALIZADO' OR status_producao IS NULL", engine)
                 
                 if not df_status_edit.empty:
                     df_sos_ativas = df_status_edit[['so', 'customer']].drop_duplicates()
@@ -1730,6 +1755,12 @@ elif menu_selecionado == "📋 Ordens de Produção":
                                 novo_item = st.text_input("Item", value=row_wo['item'])
                                 novo_nome = st.text_input("Produto", value=row_wo['product_name'])
                                 
+                                df_categorias_ed = pd.read_sql_query("SELECT categoria FROM categorias_produto ORDER BY categoria", engine)
+                                cats_disponiveis_ed = df_categorias_ed['categoria'].tolist() if not df_categorias_ed.empty else ["- Vazio -"]
+                                cat_atual = row_wo['categoria_produto'] if 'categoria_produto' in row_wo and pd.notna(row_wo['categoria_produto']) else "- Vazio -"
+                                idx_cat = cats_disponiveis_ed.index(cat_atual) if cat_atual in cats_disponiveis_ed else 0
+                                nova_cat = st.selectbox("Categoria de Produto", cats_disponiveis_ed, index=idx_cat)
+                                
                                 c_ed1, c_ed2, c_ed3 = st.columns(3)
                                 nova_qtd = c_ed1.number_input("Quantidade", value=int(row_wo['qtde']) if pd.notna(row_wo['qtde']) else 1, min_value=1, step=1)
                                 novas_hr = c_ed2.number_input("Horas Vendidas", value=float(row_wo['horas_vendidas']) if pd.notna(row_wo['horas_vendidas']) else 0.0, min_value=0.0, step=0.5)
@@ -1741,8 +1772,8 @@ elif menu_selecionado == "📋 Ordens de Produção":
                                     if not novo_wo.strip() or not novo_nome.strip():
                                         st.error("A WO e o Produto não podem ficar em branco.")
                                     else:
-                                        cursor.execute("UPDATE projetos SET wo=%s, item=%s, product_name=%s, qtde=%s, horas_vendidas=%s, status_producao=%s WHERE so=%s AND wo=%s", 
-                                                       (novo_wo.strip(), novo_item.strip(), novo_nome.strip(), nova_qtd, novas_hr, novo_st, so_clean, wo_clean_edit))
+                                        cursor.execute("UPDATE projetos SET wo=%s, item=%s, product_name=%s, categoria_produto=%s, qtde=%s, horas_vendidas=%s, status_producao=%s WHERE so=%s AND wo=%s", 
+                                                       (novo_wo.strip(), novo_item.strip(), novo_nome.strip(), nova_cat, nova_qtd, novas_hr, novo_st, so_clean, wo_clean_edit))
                                         
                                         if novo_wo.strip() != wo_clean_edit:
                                             cursor.execute("UPDATE planejamento SET wo=%s WHERE so=%s AND wo=%s", (novo_wo.strip(), so_clean, wo_clean_edit))
@@ -1766,8 +1797,7 @@ elif menu_selecionado == "📋 Ordens de Produção":
                     st.info("Nenhuma ordem ativa encontrada.")
 
         st.markdown("### 📊 Ordens Registradas")
-        st.dataframe(pd.read_sql_query("SELECT so, wo, item, linha, customer, product_name, qtde, horas_vendidas, status_producao FROM projetos", engine), width="stretch", height=400)
-
+        st.dataframe(pd.read_sql_query("SELECT so, wo, item, linha, categoria_produto as \"Categoria\", customer, product_name, qtde, horas_vendidas, status_producao FROM projetos", engine), width="stretch", height=400)
 
 # ------------------------------------------
 # ABA: PLANEJAMENTO E ALOCAÇÃO 
@@ -3024,6 +3054,7 @@ elif menu_selecionado == "🔍 Manutenção":
             "Calendário Lucy", "Configurações (Erros e Paradas)", "Parâmetros de Jornada", 
             "Responsáveis (Projetos)", "Destinações de Sobra", 
             "Parâmetros de Custo (HH/OH)", "Itens Kanban", "Fáscias (Itens Ignorados)", "Motivos de Auditoria", # <--- AQUI
+            "Categorias de Produto",
             "📥 Importação de Excel (Em Lote)"
         ], horizontal=True)
         
@@ -3327,6 +3358,30 @@ elif menu_selecionado == "🔍 Manutenção":
                     if st.button("Confirmar Exclusão da Exceção") and del_fasc != "- Selecione -":
                         cursor.execute("DELETE FROM itens_ignorados_auditoria WHERE codigo = %s", (del_fasc,))
                         conn.commit(); st.rerun()
+                        
+            # --- GESTÃO DE CATEGORIAS DE PRODUTO ---
+            elif cat_manut == "Categorias de Produto":
+                st.write("**Cadastro de Categorias de Produto (Para SO/WO)**")
+                with st.form("form_cat_prod", clear_on_submit=True):
+                    add_cat = st.text_input("Nova Categoria (Ex: SmartClad, AegisPlus L):")
+                    if st.form_submit_button("➕ Salvar Categoria", type="primary"):
+                        if add_cat:
+                            cursor.execute("INSERT INTO categorias_produto (categoria) VALUES (%s) ON CONFLICT (categoria) DO NOTHING", (add_cat.strip(),))
+                            conn.commit()
+                            st.success("✔️ Categoria cadastrada com sucesso!")
+                            st.rerun()
+                            
+                st.write("**Categorias Cadastradas:**")
+                df_cats_view = pd.read_sql_query("SELECT categoria as \"Categoria\" FROM categorias_produto ORDER BY categoria", engine)
+                st.dataframe(df_cats_view, width="stretch", hide_index=True)
+                
+                with st.expander("🗑️ Excluir Categoria"):
+                    del_cat = st.selectbox("Selecione a categoria para excluir:", ["- Selecione -"] + df_cats_view['Categoria'].tolist() if not df_cats_view.empty else ["- Vazio -"])
+                    if st.button("Confirmar Exclusão") and del_cat != "- Selecione -":
+                        cursor.execute("DELETE FROM categorias_produto WHERE categoria = %s", (del_cat,))
+                        conn.commit()
+                        st.success("Categoria excluída!")
+                        st.rerun()
 # ------------------------------------------
 # ABA: RELATÓRIOS PDF 
 # ------------------------------------------
