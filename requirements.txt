@@ -9,3 +9,5 @@ supabase
 fpdf
 openpyxl
 matplotlib
+reportlab
+numpy
