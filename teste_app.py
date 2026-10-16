@@ -56,14 +56,18 @@ def get_supabase_client() -> Client:
 engine = get_alchemy_engine()
 supabase_client = get_supabase_client()
 
-# Conexão e cursor criados de forma limpa a cada execução
-try:
-    conn = psycopg.connect(DB_URL_DIRECT)
-    conn.autocommit = False
-    cursor = conn.cursor()
-except Exception as e:
-    st.error(f"Erro ao conectar ao banco de dados: {e}")
-    st.stop()
+# ==========================================
+# CONEXÃO ISOLADA POR SESSÃO DE USUÁRIO
+# ==========================================
+if 'db_conn' not in st.session_state or st.session_state.db_conn.closed:
+    st.session_state.db_conn = psycopg.connect(DB_URL_DIRECT)
+    st.session_state.db_conn.autocommit = False
+
+conn = st.session_state.db_conn
+if conn.info.transaction_status != 0:
+    conn.rollback()
+
+cursor = conn.cursor()
 
 # Função que empacota a criação das tabelas
 def init_db():
