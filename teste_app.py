@@ -31,7 +31,7 @@ for p in [LOGO_DIR, PASTA_FOTOS]:
     os.makedirs(p, exist_ok=True)
 
 # ==========================================
-# 2. BANCO DE DADOS E SUPABASE (COM CACHE E AUTO-HEALING)
+# 2. BANCO DE DADOS E SUPABASE (CONEXÃO SEGURA E FRESH)
 # ==========================================
 RAW_DB_URL = st.secrets["DATABASE_URL"]
 
@@ -43,7 +43,6 @@ DB_URL_ALCHEMY = DB_URL_DIRECT.replace("postgresql://", "postgresql+psycopg://")
 
 @st.cache_resource
 def get_alchemy_engine():
-    # pool_pre_ping verifica se a conexão caiu antes de usar; pool_recycle renova conexões antigas
     return create_engine(DB_URL_ALCHEMY, pool_pre_ping=True, pool_size=5, max_overflow=10, pool_recycle=1800)
 
 @st.cache_resource
@@ -54,232 +53,200 @@ def get_supabase_client() -> Client:
     key_supa = st.secrets["SUPABASE_KEY"]
     return create_client(url_supa, key_supa)
 
-@st.cache_resource
-def get_psycopg_conn():
-    return psycopg.connect(DB_URL_DIRECT)
-
 engine = get_alchemy_engine()
 supabase_client = get_supabase_client()
 
+# Conexão e cursor criados de forma limpa a cada execução
 try:
-    conn = get_psycopg_conn()
-    # Se a conexão caiu por inatividade na nuvem, reconecta automaticamente
-    if conn.closed:
-        st.cache_resource.clear()
-        conn = get_psycopg_conn()
-    
-    # Se alguma transação anterior deu erro e ficou pendurada (status 3 = INERROR), limpa com rollback
-    if conn.info.transaction_status == 3:
-        conn.rollback()
-        
+    conn = psycopg.connect(DB_URL_DIRECT)
     conn.autocommit = False
     cursor = conn.cursor()
 except Exception as e:
     st.error(f"Erro ao conectar ao banco de dados: {e}")
     st.stop()
 
-# Função que empacota a criação das tabelas para não dar o NameError
+# Função que empacota a criação das tabelas
 def init_db():
-    # ⚡ MÁGICA AQUI: Ativa o processamento isolado para o banco não travar!
-    conn.autocommit = True 
+    # Usa uma conexão dedicada com autocommit ativado apenas para a estrutura inicial
+    with psycopg.connect(DB_URL_DIRECT, autocommit=True) as init_conn:
+        with init_conn.cursor() as init_cur:
+            init_cur.execute('CREATE TABLE IF NOT EXISTS apontamentos (id SERIAL PRIMARY KEY, data_registro TEXT, matricula TEXT, operador TEXT, so TEXT, customer TEXT, wo TEXT, product_name TEXT, unidade TEXT, atividade TEXT, tipo TEXT, tipo_erro TEXT, causador_erro TEXT, hora_inicio TEXT, hora_fim TEXT, horas_normais NUMERIC, he_50 NUMERIC, he_100 NUMERIC, descricao TEXT, foto_path TEXT, foto_depois_path TEXT, saldo_bh NUMERIC DEFAULT 0.0)')
+            init_cur.execute('CREATE TABLE IF NOT EXISTS colaboradores (matricula TEXT PRIMARY KEY, nome TEXT, linha TEXT, data_admissao TEXT, data_demissao TEXT)')
+            init_cur.execute('CREATE TABLE IF NOT EXISTS projetos (so TEXT, wo TEXT, customer TEXT, item TEXT, product_name TEXT, qtde INTEGER, status_producao TEXT, horas_vendidas NUMERIC, linha TEXT)')
+            init_cur.execute('CREATE TABLE IF NOT EXISTS tipos_erro (erro TEXT PRIMARY KEY)')
+            init_cur.execute('CREATE TABLE IF NOT EXISTS causadores_erro (causador TEXT PRIMARY KEY)')
+            init_cur.execute('CREATE TABLE IF NOT EXISTS categorias_parada (categoria TEXT PRIMARY KEY)')
+            init_cur.execute('CREATE TABLE IF NOT EXISTS calendario_lucy (week TEXT PRIMARY KEY, start_date TEXT, end_date TEXT, std_month TEXT, lucy_month TEXT)')
+            init_cur.execute('CREATE TABLE IF NOT EXISTS feriados (data TEXT PRIMARY KEY, descricao TEXT)')
+            init_cur.execute('CREATE TABLE IF NOT EXISTS ferias_colaboradores (id SERIAL PRIMARY KEY, matricula TEXT, data_inicio TEXT, data_fim TEXT)')
+            init_cur.execute('CREATE TABLE IF NOT EXISTS banco_horas_log (id SERIAL PRIMARY KEY, matricula TEXT, data TEXT, horas_delta NUMERIC, operacao TEXT, justificativa TEXT)')
+            init_cur.execute('CREATE TABLE IF NOT EXISTS parametros_jornada (id SERIAL PRIMARY KEY, data_inicio TEXT, data_fim TEXT, carga_seg_qui NUMERIC, carga_sexta NUMERIC, hora_saida_seg_qui TEXT, hora_saida_sexta TEXT)')
+            init_cur.execute('CREATE TABLE IF NOT EXISTS planejamento (id SERIAL PRIMARY KEY, data_planejada TEXT, matricula TEXT, so TEXT, wo TEXT, unidade TEXT DEFAULT \'Geral\', horas_planejadas NUMERIC)')
+            
+            init_cur.execute('CREATE TABLE IF NOT EXISTS destinacoes_sobra (destinacao TEXT PRIMARY KEY)')
+            init_cur.execute('''
+                CREATE TABLE IF NOT EXISTS materiais_sobra (
+                    id SERIAL PRIMARY KEY,
+                    so TEXT,
+                    codigo TEXT,
+                    descricao TEXT,
+                    quantidade INTEGER,
+                    valor NUMERIC,
+                    destinacao TEXT,
+                    data_registro TIMESTAMP
+                )
+            ''')
+            init_cur.execute("SELECT COUNT(*) FROM destinacoes_sobra")
+            if init_cur.fetchone()[0] == 0:
+                for d in ["Devolução Almoxarifado", "Sucata / Descarte", "Ajuste de BOM (Engenharia)"]:
+                    init_cur.execute("INSERT INTO destinacoes_sobra (destinacao) VALUES (%s)", (d,))
+            
+            init_cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'materiais_sobra'")
+            col_sob = [c[0] for c in init_cur.fetchall()]
+            if 'observacao' not in col_sob:
+                try: init_cur.execute("ALTER TABLE materiais_sobra ADD COLUMN observacao TEXT")
+                except: pass
 
-    # Verificação inicial da Estrutura das Tabelas
-    cursor.execute('CREATE TABLE IF NOT EXISTS apontamentos (id SERIAL PRIMARY KEY, data_registro TEXT, matricula TEXT, operador TEXT, so TEXT, customer TEXT, wo TEXT, product_name TEXT, unidade TEXT, atividade TEXT, tipo TEXT, tipo_erro TEXT, causador_erro TEXT, hora_inicio TEXT, hora_fim TEXT, horas_normais NUMERIC, he_50 NUMERIC, he_100 NUMERIC, descricao TEXT, foto_path TEXT, foto_depois_path TEXT, saldo_bh NUMERIC DEFAULT 0.0)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS colaboradores (matricula TEXT PRIMARY KEY, nome TEXT, linha TEXT, data_admissao TEXT, data_demissao TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS projetos (so TEXT, wo TEXT, customer TEXT, item TEXT, product_name TEXT, qtde INTEGER, status_producao TEXT, horas_vendidas NUMERIC, linha TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS tipos_erro (erro TEXT PRIMARY KEY)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS causadores_erro (causador TEXT PRIMARY KEY)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS categorias_parada (categoria TEXT PRIMARY KEY)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS calendario_lucy (week TEXT PRIMARY KEY, start_date TEXT, end_date TEXT, std_month TEXT, lucy_month TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS feriados (data TEXT PRIMARY KEY, descricao TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS ferias_colaboradores (id SERIAL PRIMARY KEY, matricula TEXT, data_inicio TEXT, data_fim TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS banco_horas_log (id SERIAL PRIMARY KEY, matricula TEXT, data TEXT, horas_delta NUMERIC, operacao TEXT, justificativa TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS parametros_jornada (id SERIAL PRIMARY KEY, data_inicio TEXT, data_fim TEXT, carga_seg_qui NUMERIC, carga_sexta NUMERIC, hora_saida_seg_qui TEXT, hora_saida_sexta TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS planejamento (id SERIAL PRIMARY KEY, data_planejada TEXT, matricula TEXT, so TEXT, wo TEXT, unidade TEXT DEFAULT \'Geral\', horas_planejadas NUMERIC)')
-    # --- TABELAS DE SOBRAS DE MATERIAL ---
-    cursor.execute('CREATE TABLE IF NOT EXISTS destinacoes_sobra (destinacao TEXT PRIMARY KEY)')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS materiais_sobra (
-            id SERIAL PRIMARY KEY,
-            so TEXT,
-            codigo TEXT,
-            descricao TEXT,
-            quantidade INTEGER,
-            valor NUMERIC,
-            destinacao TEXT,
-            data_registro TIMESTAMP
-        )
-    ''')
-    cursor.execute("SELECT COUNT(*) FROM destinacoes_sobra")
-    if cursor.fetchone()[0] == 0:
-        for d in ["Devolução Almoxarifado", "Sucata / Descarte", "Ajuste de BOM (Engenharia)"]:
-            cursor.execute("INSERT INTO destinacoes_sobra (destinacao) VALUES (%s)", (d,))
-    
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'materiais_sobra'")
-    col_sob = [c[0] for c in cursor.fetchall()]
-    if 'observacao' not in col_sob:
-        try: cursor.execute("ALTER TABLE materiais_sobra ADD COLUMN observacao TEXT")
-        except: pass
+            init_cur.execute('''
+                CREATE TABLE IF NOT EXISTS parametros_custos (
+                    parametro TEXT PRIMARY KEY,
+                    valor NUMERIC
+                )
+            ''')
+            init_cur.execute("INSERT INTO parametros_custos (parametro, valor) VALUES ('taxa_hh', 77.17), ('taxa_oh', 1.7569) ON CONFLICT (parametro) DO NOTHING;")
 
-    # 1. Configurações de Custos Globais (HH e OH)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS parametros_custos (
-            parametro TEXT PRIMARY KEY,
-            valor NUMERIC
-        )
-    ''')
-    cursor.execute("INSERT INTO parametros_custos (parametro, valor) VALUES ('taxa_hh', 77.17), ('taxa_oh', 1.7569) ON CONFLICT (parametro) DO NOTHING;")
+            init_cur.execute('''
+                CREATE TABLE IF NOT EXISTS itens_kanban (
+                    codigo TEXT PRIMARY KEY,
+                    descricao TEXT
+                )
+            ''')
 
-    # 2. Itens Kanban Fixos
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS itens_kanban (
-            codigo TEXT PRIMARY KEY,
-            descricao TEXT
-        )
-    ''')
+            init_cur.execute('''
+                CREATE TABLE IF NOT EXISTS itens_ignorados_auditoria (
+                    codigo TEXT PRIMARY KEY,
+                    descricao TEXT,
+                    motivo TEXT
+                )
+            ''')
 
-    # 3. Matérias-Primas / Fáscias a Ignorar na Auditoria
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS itens_ignorados_auditoria (
-            codigo TEXT PRIMARY KEY,
-            descricao TEXT,
-            motivo TEXT
-        )
-    ''')
+            init_cur.execute('''
+                CREATE TABLE IF NOT EXISTS auditoria_3vias_historico (
+                    id SERIAL PRIMARY KEY,
+                    data_auditoria TIMESTAMP,
+                    item TEXT,
+                    descricao TEXT,
+                    qtd_bom_inicial NUMERIC,
+                    qtd_bom_final NUMERIC,
+                    qtd_real NUMERIC,
+                    desvio_engenharia NUMERIC,
+                    desvio_fabrica NUMERIC,
+                    valor_impacto NUMERIC,
+                    status TEXT
+                )
+            ''')
 
-    # 4. Histórico de Divergências de 3 Vias (Engenharia vs Fábrica)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS auditoria_3vias_historico (
-            id SERIAL PRIMARY KEY,
-            data_auditoria TIMESTAMP,
-            item TEXT,
-            descricao TEXT,
-            qtd_bom_inicial NUMERIC,
-            qtd_bom_final NUMERIC,
-            qtd_real NUMERIC,
-            desvio_engenharia NUMERIC,
-            desvio_fabrica NUMERIC,
-            valor_impacto NUMERIC,
-            status TEXT
-        )
-    ''')
-    conn.commit()
+            init_cur.execute('''
+                CREATE TABLE IF NOT EXISTS motivos_auditoria (
+                    motivo TEXT PRIMARY KEY
+                )
+            ''')
 
-    # Tabela de Causas Raízes (Motivos de Auditoria)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS motivos_auditoria (
-            motivo TEXT PRIMARY KEY
-        )
-    ''')
+            init_cur.execute('''
+                CREATE TABLE IF NOT EXISTS categorias_produto (
+                    categoria TEXT PRIMARY KEY
+                )
+            ''')
 
-    # Tabela de Categorias de Produto
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS categorias_produto (
-            categoria TEXT PRIMARY KEY
-        )
-    ''')
+            init_cur.execute("SELECT COUNT(*) FROM categorias_produto")
+            if init_cur.fetchone()[0] == 0:
+                default_cats = ["SmartClad", "AegisPlus L", "AegisPlus V", "AegisPlus C", "Aegis36 1W", "Aegis36 2W", "Aegis36 3W", "Aegis36 TopEx", "SmartCom"]
+                for c in default_cats:
+                    init_cur.execute("INSERT INTO categorias_produto (categoria) VALUES (%s) ON CONFLICT (categoria) DO NOTHING", (c,))
+                
+            init_cur.execute("SELECT COUNT(*) FROM motivos_auditoria")
+            if init_cur.fetchone()[0] == 0:
+                default_motivos = ["Scrap / Refugo", "Ajuste de Projeto (BOM)", "Quebra na Montagem", "Substituição de Material", "Perda de Processo", "Erro de Separação / Estoque"]
+                for m in default_motivos:
+                    init_cur.execute("INSERT INTO motivos_auditoria (motivo) VALUES (%s) ON CONFLICT (motivo) DO NOTHING", (m,))
 
-    # Preenche com as suas categorias iniciais automaticamente
-    cursor.execute("SELECT COUNT(*) FROM categorias_produto")
-    if cursor.fetchone()[0] == 0:
-        default_cats = ["SmartClad", "AegisPlus L", "AegisPlus V", "AegisPlus C", "Aegis36 1W", "Aegis36 2W", "Aegis36 3W", "Aegis36 TopEx", "SmartCom"]
-        for c in default_cats:
-            cursor.execute("INSERT INTO categorias_produto (categoria) VALUES (%s) ON CONFLICT (categoria) DO NOTHING", (c,))
-        
-    # Insere as opções padrão se a tabela estiver vazia
-    cursor.execute("SELECT COUNT(*) FROM motivos_auditoria")
-    if cursor.fetchone()[0] == 0:
-        default_motivos = ["Scrap / Refugo", "Ajuste de Projeto (BOM)", "Quebra na Montagem", "Substituição de Material", "Perda de Processo", "Erro de Separação / Estoque"]
-        for m in default_motivos:
-            cursor.execute("INSERT INTO motivos_auditoria (motivo) VALUES (%s) ON CONFLICT (motivo) DO NOTHING", (m,))
+            init_cur.execute('''
+                CREATE TABLE IF NOT EXISTS projetistas (
+                    id SERIAL PRIMARY KEY,
+                    nome TEXT,
+                    especialidade TEXT
+                )
+            ''')
+            
+            init_cur.execute("SELECT COUNT(*) FROM projetistas")
+            if init_cur.fetchone()[0] == 0:
+                equipe = [
+                    ('Juliana', 'Elétrica'), ('Peterson', 'Elétrica'), ('Giliard', 'Elétrica'), ('Marilia', 'Elétrica'),
+                    ('Rafael', 'Mecânica'), ('Arnaldo', 'Mecânica'), ('Daniel', 'Mecânica'), ('Almoxarifado', 'Logistica')
+                ]
+                for p in equipe:
+                    init_cur.execute("INSERT INTO projetistas (nome, especialidade) VALUES (%s, %s)", p)
 
-    # 1. TABELA DE PROJETISTAS
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS projetistas (
-            id SERIAL PRIMARY KEY,
-            nome TEXT,
-            especialidade TEXT
-        )
-    ''')
-    
-    # Pré-cadastrar a sua equipe automaticamente se a tabela estiver vazia
-    cursor.execute("SELECT COUNT(*) FROM projetistas")
-    if cursor.fetchone()[0] == 0:
-        equipe = [
-            ('Juliana', 'Elétrica'), ('Peterson', 'Elétrica'), ('Giliard', 'Elétrica'), ('Marilia', 'Elétrica'),
-            ('Rafael', 'Mecânica'), ('Arnaldo', 'Mecânica'), ('Daniel', 'Mecânica'), ('Almoxarifado', 'Logistica')
-        ]
-        for p in equipe:
-            cursor.execute("INSERT INTO projetistas (nome, especialidade) VALUES (%s, %s)", p)
+            init_cur.execute('''
+                CREATE TABLE IF NOT EXISTS kanban_fases (
+                    id SERIAL PRIMARY KEY,
+                    so TEXT,
+                    wo TEXT,
+                    categoria TEXT, 
+                    fase TEXT, 
+                    responsavel TEXT, 
+                    data_inicio TIMESTAMP,
+                    data_prevista DATE,
+                    data_fim TIMESTAMP,
+                    status TEXT 
+                )
+            ''')
 
-    # 2. TABELA DE FASES DO KANBAN E MARCOS
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS kanban_fases (
-            id SERIAL PRIMARY KEY,
-            so TEXT,             -- NOVO: Para agrupar a Engenharia
-            wo TEXT,             -- Para agrupar a Fábrica
-            categoria TEXT, 
-            fase TEXT, 
-            responsavel TEXT, 
-            data_inicio TIMESTAMP,
-            data_prevista DATE,  -- NOVO: Meta de entrega da Engenharia
-            data_fim TIMESTAMP,
-            status TEXT 
-        )
-    ''')
+            init_cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'kanban_fases'")
+            col_k = [c[0] for c in init_cur.fetchall()]
+            if 'data_prevista' not in col_k:
+                try: init_cur.execute("ALTER TABLE kanban_fases ADD COLUMN data_prevista DATE")
+                except: pass
+            if 'so' not in col_k:
+                try: init_cur.execute("ALTER TABLE kanban_fases ADD COLUMN so TEXT")
+                except: pass
 
-    # Script de Migração Automática (Adiciona as colunas novas sem apagar seus dados)
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'kanban_fases'")
-    col_k = [c[0] for c in cursor.fetchall()]
-    if 'data_prevista' not in col_k:
-        try: cursor.execute("ALTER TABLE kanban_fases ADD COLUMN data_prevista DATE")
-        except: pass
-    if 'so' not in col_k:
-        try: cursor.execute("ALTER TABLE kanban_fases ADD COLUMN so TEXT")
-        except: pass
+            init_cur.execute('''
+                CREATE TABLE IF NOT EXISTS kanban_materiais (
+                    id SERIAL PRIMARY KEY,
+                    wo TEXT,
+                    codigo TEXT,
+                    descricao TEXT,
+                    quantidade INTEGER,
+                    data_apontamento TIMESTAMP,
+                    data_prevista_chegada DATE,
+                    data_recebimento DATE,
+                    status TEXT
+                )
+            ''')
 
-    # 3. TABELA DE GESTÃO DE MATERIAIS FALTANTES (Com campos obrigatórios)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS kanban_materiais (
-            id SERIAL PRIMARY KEY,
-            wo TEXT,
-            codigo TEXT,
-            descricao TEXT,
-            quantidade INTEGER,
-            data_apontamento TIMESTAMP,
-            data_prevista_chegada DATE,
-            data_recebimento DATE,
-            status TEXT -- "Faltante", "Recebido"
-        )
-    ''')
+            init_cur.execute("SELECT COUNT(*) FROM parametros_jornada")
+            if init_cur.fetchone()[0] == 0:
+                init_cur.execute("INSERT INTO parametros_jornada (data_inicio, data_fim, carga_seg_qui, carga_sexta, hora_saida_seg_qui, hora_saida_sexta) VALUES (%s, %s, %s, %s, %s, %s)", 
+                               ('2020-01-01', None, 8.17, 6.25, '17:05', '15:00'))
 
-    cursor.execute("SELECT COUNT(*) FROM parametros_jornada")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO parametros_jornada (data_inicio, data_fim, carga_seg_qui, carga_sexta, hora_saida_seg_qui, hora_saida_sexta) VALUES (%s, %s, %s, %s, %s, %s)", 
-                       ('2020-01-01', None, 8.17, 6.25, '17:05', '15:00'))
+            colunas_apontamentos = [
+                ("customer", "TEXT"), ("tipo_erro", "TEXT"), ("causador_erro", "TEXT"),
+                ("so", "TEXT"), ("product_name", "TEXT"), ("foto_path", "TEXT"),
+                ("foto_depois_path", "TEXT"), ("saldo_bh", "NUMERIC DEFAULT 0.0"), ("linha", "TEXT")
+            ]
+            for col_nome, col_tipo in colunas_apontamentos:
+                init_cur.execute(f"ALTER TABLE apontamentos ADD COLUMN IF NOT EXISTS {col_nome} {col_tipo}")
 
-    # Verificações de migração de colunas para PostgreSQL (Nativo e Seguro)
-    colunas_apontamentos = [
-        ("customer", "TEXT"), ("tipo_erro", "TEXT"), ("causador_erro", "TEXT"),
-        ("so", "TEXT"), ("product_name", "TEXT"), ("foto_path", "TEXT"),
-        ("foto_depois_path", "TEXT"), ("saldo_bh", "NUMERIC DEFAULT 0.0"), ("linha", "TEXT")
-    ]
-    for col_nome, col_tipo in colunas_apontamentos:
-        cursor.execute(f"ALTER TABLE apontamentos ADD COLUMN IF NOT EXISTS {col_nome} {col_tipo}")
-
-    cursor.execute("ALTER TABLE projetos ADD COLUMN IF NOT EXISTS horas_vendidas NUMERIC DEFAULT 0.0")
-    cursor.execute("ALTER TABLE projetos ADD COLUMN IF NOT EXISTS linha TEXT")
-    cursor.execute("ALTER TABLE projetos ADD COLUMN IF NOT EXISTS categoria_produto TEXT")
-    cursor.execute("ALTER TABLE planejamento ADD COLUMN IF NOT EXISTS unidade TEXT DEFAULT 'Geral'")
-        
-    # ⚡ Desativa o autocommit para o resto do app funcionar com transações padrão
-    conn.autocommit = False
+            init_cur.execute("ALTER TABLE projetos ADD COLUMN IF NOT EXISTS horas_vendidas NUMERIC DEFAULT 0.0")
+            init_cur.execute("ALTER TABLE projetos ADD COLUMN IF NOT EXISTS linha TEXT")
+            init_cur.execute("ALTER TABLE projetos ADD COLUMN IF NOT EXISTS categoria_produto TEXT")
+            init_cur.execute("ALTER TABLE planejamento ADD COLUMN IF NOT EXISTS unidade TEXT DEFAULT 'Geral'")
 
 # Executa a criação das tabelas apenas se não existir
 if 'db_initialized' not in st.session_state:
     init_db()
     st.session_state.db_initialized = True
-
 st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
