@@ -247,10 +247,15 @@ def init_db():
             init_cur.execute("ALTER TABLE projetos ADD COLUMN IF NOT EXISTS categoria_produto TEXT")
             init_cur.execute("ALTER TABLE planejamento ADD COLUMN IF NOT EXISTS unidade TEXT DEFAULT 'Geral'")
 
-# Executa a criação das tabelas apenas se não existir
-if 'db_initialized' not in st.session_state:
+# Executa a criação das tabelas APENAS UMA VEZ no servidor (Global)
+@st.cache_resource
+def inicializar_banco_seguro():
     init_db()
-    st.session_state.db_initialized = True
+    return True
+
+inicializar_banco_seguro()
+#teste
+
 st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
