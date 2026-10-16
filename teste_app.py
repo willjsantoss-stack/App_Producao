@@ -31,40 +31,52 @@ for p in [LOGO_DIR, PASTA_FOTOS]:
     os.makedirs(p, exist_ok=True)
 
 # ==========================================
-# 2. BANCO DE DADOS (CORREÇÃO DEFINITIVA)
+# 2. BANCO DE DADOS E SUPABASE (COM CACHE E AUTO-HEALING)
 # ==========================================
-# Lê a URL original do seu painel de Secrets
 RAW_DB_URL = st.secrets["DATABASE_URL"]
 
-# 1. Preparar a URL para a ligação direta (psycopg 3)
 DB_URL_DIRECT = RAW_DB_URL.replace("postgresql+psycopg2://", "postgresql://")
 DB_URL_DIRECT = DB_URL_DIRECT.replace("postgresql+psycopg://", "postgresql://")
 DB_URL_DIRECT = DB_URL_DIRECT.replace("postgres://", "postgresql://")
 
-# 2. Preparar a URL para o SQLAlchemy (Pandas)
 DB_URL_ALCHEMY = DB_URL_DIRECT.replace("postgresql://", "postgresql+psycopg://")
 
-# Engine para o Pandas (Usado nos DataFrames e abas de exportação)
-engine = create_engine(DB_URL_ALCHEMY)
+@st.cache_resource
+def get_alchemy_engine():
+    # pool_pre_ping verifica se a conexão caiu antes de usar; pool_recycle renova conexões antigas
+    return create_engine(DB_URL_ALCHEMY, pool_pre_ping=True, pool_size=5, max_overflow=10, pool_recycle=1800)
 
-# Conexão global e cursor para o resto do app 
+@st.cache_resource
+def get_supabase_client() -> Client:
+    url_supa = st.secrets["SUPABASE_URL"]
+    if url_supa.endswith("/rest/v1/"): 
+        url_supa = url_supa.replace("/rest/v1/", "")
+    key_supa = st.secrets["SUPABASE_KEY"]
+    return create_client(url_supa, key_supa)
+
+@st.cache_resource
+def get_psycopg_conn():
+    return psycopg.connect(DB_URL_DIRECT)
+
+engine = get_alchemy_engine()
+supabase_client = get_supabase_client()
+
 try:
-    conn = psycopg.connect(DB_URL_DIRECT)
+    conn = get_psycopg_conn()
+    # Se a conexão caiu por inatividade na nuvem, reconecta automaticamente
+    if conn.closed:
+        st.cache_resource.clear()
+        conn = get_psycopg_conn()
+    
+    # Se alguma transação anterior deu erro e ficou pendurada (status 3 = INERROR), limpa com rollback
+    if conn.info.transaction_status == 3:
+        conn.rollback()
+        
     conn.autocommit = False
     cursor = conn.cursor()
 except Exception as e:
     st.error(f"Erro ao conectar ao banco de dados: {e}")
     st.stop()
-
-# ==========================================
-# 2.1 CONEXÃO COM O SUPABASE STORAGE (FOTOS)
-# ==========================================
-url_supa = st.secrets["SUPABASE_URL"]
-if url_supa.endswith("/rest/v1/"): 
-    url_supa = url_supa.replace("/rest/v1/", "") # Limpa a URL automaticamente
-    
-key_supa = st.secrets["SUPABASE_KEY"]
-supabase_client: Client = create_client(url_supa, key_supa)
 
 # Função que empacota a criação das tabelas para não dar o NameError
 def init_db():
@@ -246,38 +258,21 @@ def init_db():
         cursor.execute("INSERT INTO parametros_jornada (data_inicio, data_fim, carga_seg_qui, carga_sexta, hora_saida_seg_qui, hora_saida_sexta) VALUES (%s, %s, %s, %s, %s, %s)", 
                        ('2020-01-01', None, 8.17, 6.25, '17:05', '15:00'))
 
-    # Verificações de migração de colunas para PostgreSQL
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'apontamentos'")
-    col_db = [c[0] for c in cursor.fetchall()]
-    for col in ['customer', 'tipo_erro', 'causador_erro', 'so', 'product_name', 'foto_path', 'foto_depois_path', 'saldo_bh', 'linha']:
-        if col not in col_db: 
-            try: 
-                if col == 'saldo_bh':
-                    cursor.execute(f"ALTER TABLE apontamentos ADD COLUMN {col} NUMERIC DEFAULT 0.0")
-                else:
-                    cursor.execute(f"ALTER TABLE apontamentos ADD COLUMN {col} TEXT")
-            except: pass
+    # Verificações de migração de colunas para PostgreSQL (Nativo e Seguro)
+    colunas_apontamentos = [
+        ("customer", "TEXT"), ("tipo_erro", "TEXT"), ("causador_erro", "TEXT"),
+        ("so", "TEXT"), ("product_name", "TEXT"), ("foto_path", "TEXT"),
+        ("foto_depois_path", "TEXT"), ("saldo_bh", "NUMERIC DEFAULT 0.0"), ("linha", "TEXT")
+    ]
+    for col_nome, col_tipo in colunas_apontamentos:
+        cursor.execute(f"ALTER TABLE apontamentos ADD COLUMN IF NOT EXISTS {col_nome} {col_tipo}")
 
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'projetos'")
-    col_proj = [c[0] for c in cursor.fetchall()]
-    if 'horas_vendidas' not in col_proj:
-        try: cursor.execute("ALTER TABLE projetos ADD COLUMN horas_vendidas NUMERIC DEFAULT 0.0")
-        except: pass
-    if 'linha' not in col_proj:
-        try: cursor.execute("ALTER TABLE projetos ADD COLUMN linha TEXT")
-        except: pass
-    # ---- ADICIONE ISTO AQUI: ----
-    if 'categoria_produto' not in col_proj:
-        try: cursor.execute("ALTER TABLE projetos ADD COLUMN categoria_produto TEXT")
-        except: pass
-
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'planejamento'")
-    col_plan = [c[0] for c in cursor.fetchall()]
-    if 'unidade' not in col_plan:
-        try: cursor.execute("ALTER TABLE planejamento ADD COLUMN unidade TEXT DEFAULT 'Geral'")
-        except: pass
+    cursor.execute("ALTER TABLE projetos ADD COLUMN IF NOT EXISTS horas_vendidas NUMERIC DEFAULT 0.0")
+    cursor.execute("ALTER TABLE projetos ADD COLUMN IF NOT EXISTS linha TEXT")
+    cursor.execute("ALTER TABLE projetos ADD COLUMN IF NOT EXISTS categoria_produto TEXT")
+    cursor.execute("ALTER TABLE planejamento ADD COLUMN IF NOT EXISTS unidade TEXT DEFAULT 'Geral'")
         
-    # ⚡ Desativa a mágica para o resto do app funcionar com a segurança padrão
+    # ⚡ Desativa o autocommit para o resto do app funcionar com transações padrão
     conn.autocommit = False
 
 # Executa a criação das tabelas apenas se não existir
@@ -896,12 +891,15 @@ if menu_selecionado == "📝 Lançamentos":
                         
                         time_sys.sleep(1.5)
                         
-                        for key in list(st.session_state.keys()): 
-                            if key not in ['hi_input', 'hf_input']:
+                        # Limpa APENAS os campos do formulário de lançamento, preservando o resto do sistema
+                        chaves_limpar = [
+                            'hi_input', 'hf_input', 't_erro_box', 'c_erro_box', 
+                            'foto_uploader_antes', 'foto_uploader_depois', 'motivo_desvio_input',
+                            'atividade_box_parada', 'atividade_box_falta'
+                        ]
+                        for key in chaves_limpar:
+                            if key in st.session_state:
                                 del st.session_state[key]
-                                
-                        if 'hi_input' in st.session_state: del st.session_state['hi_input']
-                        if 'hf_input' in st.session_state: del st.session_state['hf_input']
                             
                         st.session_state['colab_sel_box'] = "- Selecione -"
                         st.session_state['tipo_ap_radio'] = "Produção Normal"
