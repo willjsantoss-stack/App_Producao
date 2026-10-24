@@ -867,23 +867,20 @@ if menu_selecionado == "📝 Lançamentos":
                         
                         time_sys.sleep(1.5)
                         
-                        # Limpa APENAS os campos do formulário de lançamento, preservando o resto do sistema
+                        # Correção Definitiva: Apagar as chaves força o Streamlit a recriar os campos vazios
                         chaves_limpar = [
+                            'colab_sel_box', 'tipo_ap_radio', 'so_sel_box', 
+                            'wo_sel_box', 'unidade_sel_box', 'obs_input',
                             'hi_input', 'hf_input', 't_erro_box', 'c_erro_box', 
-                            'foto_uploader_antes', 'foto_uploader_depois', 'motivo_desvio_input',
-                            'atividade_box_parada', 'atividade_box_falta'
+                            'foto_uploader_antes', 'foto_uploader_depois', 
+                            'motivo_desvio_input', 'atividade_box_parada', 
+                            'atividade_box_falta'
                         ]
+                        
                         for key in chaves_limpar:
                             if key in st.session_state:
                                 del st.session_state[key]
                             
-                        st.session_state['colab_sel_box'] = "- Selecione -"
-                        st.session_state['tipo_ap_radio'] = "Produção Normal"
-                        st.session_state['so_sel_box'] = "- Selecione -"
-                        st.session_state['wo_sel_box'] = "Não Vinculada"
-                        st.session_state['unidade_sel_box'] = "Geral"
-                        st.session_state['obs_input'] = ""
-                        
                         st.rerun()
 
         # ==========================================
