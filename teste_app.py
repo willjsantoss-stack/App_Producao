@@ -3142,22 +3142,57 @@ elif menu_selecionado == "🔍 Manutenção":
             elif cat_manut == "Colaboradores":
                 c_col1, c_col2 = st.columns([1, 2])
                 with c_col1:
-                    st.write("**Registrar Desligamento**")
-                    colab_ativos = pd.read_sql_query("SELECT matricula, nome FROM colaboradores WHERE data_demissao IS NULL OR data_demissao = ''", engine)
-                    if not colab_ativos.empty:
-                        mat_dem = st.selectbox("Selecione o Colaborador:", [f"{r['matricula']} - {r['nome']}" for _, r in colab_ativos.iterrows()])
-                        d_dem = st.date_input("Data de Desligamento", date.today(), format="DD/MM/YYYY")
-                        if st.button("💾 Registrar Desligamento", width="stretch"):
-                            cursor.execute("UPDATE colaboradores SET data_demissao = %s WHERE matricula = %s", (d_dem.strftime("%Y-%m-%d"), mat_dem.split(" - ")[0]))
-                            conn.commit()
-                            st.success("Desligamento registrado!"); st.rerun()
-                    else:
-                        st.info("Não há colaboradores ativos para desligar.")
+                    with st.expander("➕ Cadastrar Novo Colaborador", expanded=True):
+                        with st.form("form_novo_colab", clear_on_submit=True):
+                            mat_n = st.text_input("Matrícula (Pode ser alfanumérico):*")
+                            nome_n = st.text_input("Nome Completo:*")
+                            
+                            df_linhas_existentes = pd.read_sql_query("SELECT DISTINCT linha FROM colaboradores WHERE linha IS NOT NULL AND linha != ''", engine)
+                            linhas_lista = df_linhas_existentes['linha'].tolist()
+                            linha_n = st.selectbox("Setor / Linha:*", ["- Digitar Novo Setor -"] + linhas_lista)
+                            nova_linha_n = st.text_input("Digite o Novo Setor (Se selecionou a primeira opção):")
+                            
+                            dt_adm = st.date_input("Data de Admissão:*", format="DD/MM/YYYY")
+                            
+                            if st.form_submit_button("💾 Salvar Colaborador", type="primary", use_container_width=True):
+                                linha_final = nova_linha_n.strip() if linha_n == "- Digitar Novo Setor -" else linha_n
+                                
+                                if not mat_n or not nome_n or not linha_final:
+                                    st.error("Preencha Matrícula, Nome e Setor.")
+                                else:
+                                    try:
+                                        cursor.execute("INSERT INTO colaboradores (matricula, nome, linha, data_admissao, data_demissao) VALUES (%s, %s, %s, %s, NULL)", 
+                                                       (mat_n.strip(), nome_n.strip().upper(), linha_final, dt_adm.strftime("%Y-%m-%d")))
+                                        conn.commit()
+                                        st.success(f"✔️ {nome_n} cadastrado com sucesso!")
+                                        time_sys.sleep(1.5)
+                                        st.rerun()
+                                    except Exception as e:
+                                        conn.rollback()
+                                        if "UniqueViolation" in str(e) or "duplicate key" in str(e).lower():
+                                            st.error("❌ Esta matrícula já existe no sistema.")
+                                        else:
+                                            st.error(f"❌ Erro ao salvar: {e}")
+                                            
+                    with st.expander("🔻 Registrar Desligamento", expanded=False):
+                        colab_ativos = pd.read_sql_query("SELECT matricula, nome FROM colaboradores WHERE data_demissao IS NULL OR data_demissao = ''", engine)
+                        if not colab_ativos.empty:
+                            mat_dem = st.selectbox("Selecione o Colaborador:", [f"{r['matricula']} - {r['nome']}" for _, r in colab_ativos.iterrows()])
+                            d_dem = st.date_input("Data de Desligamento", date.today(), format="DD/MM/YYYY")
+                            if st.button("💾 Registrar Desligamento", use_container_width=True):
+                                cursor.execute("UPDATE colaboradores SET data_demissao = %s WHERE matricula = %s", (d_dem.strftime("%Y-%m-%d"), mat_dem.split(" - ")[0]))
+                                conn.commit()
+                                st.success("✔️ Desligamento registrado!")
+                                time_sys.sleep(1.5)
+                                st.rerun()
+                        else:
+                            st.info("Não há colaboradores ativos para desligar.")
+                            
                 with c_col2:
                     st.write("**Lista Geral de Colaboradores**")
-                    df_colab_view = pd.read_sql_query("SELECT * FROM colaboradores", engine)
+                    df_colab_view = pd.read_sql_query("SELECT matricula, nome, linha, data_admissao, data_demissao FROM colaboradores ORDER BY nome", engine)
                     df_colab_view = padronizar_datas_para_tela(df_colab_view, ['data_admissao', 'data_demissao'])
-                    st.dataframe(df_colab_view, width="stretch")
+                    st.dataframe(df_colab_view, width="stretch", hide_index=True)
 
             elif cat_manut == "Responsáveis (Projetos)":
                 st.write("**Cadastrar Novo Responsável / Equipe**")
