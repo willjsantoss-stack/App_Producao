@@ -3893,10 +3893,15 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                                 val_oh = df_cost_plan.loc[df_cost_plan['Code'] == 'Labour OH', 'Total'].max()
                                 if pd.notna(val_oh): dict_custos_plan['Labour OH'] = float(val_oh)
                                 
-                                # --- LÓGICA OTIMIZADA: APENAS RAW MATERIAL COST ---
-                                # Foca diretamente na matéria-prima bruta, ignorando Sub-assembly e SubContracting
+                                # --- LÓGICA CORRIGIDA: MATERIAL TOTAL DO PROJETO ---
+                                # Soma do "Raw Material Cost" com "Sub-assembly Cost" (excluindo SubContracting)
                                 val_raw = df_cost_plan.loc[df_cost_plan['Code'] == 'Raw Material Cost', 'Total'].max()
-                                dict_custos_plan['Material Cost'] = float(val_raw) if pd.notna(val_raw) else 0.0
+                                val_sub_asm = df_cost_plan.loc[df_cost_plan['Code'] == 'Sub-assembly Cost', 'Total'].max()
+                                
+                                raw_cost = float(val_raw) if pd.notna(val_raw) else 0.0
+                                sub_asm_cost = float(val_sub_asm) if pd.notna(val_sub_asm) else 0.0
+                                
+                                dict_custos_plan['Material Cost'] = raw_cost + sub_asm_cost
                         # ------------------------------------------------------------
                         
                         st.session_state['res_audit_3way'] = df_res
