@@ -632,6 +632,22 @@ if menu_selecionado == "📝 Lançamentos":
     if user_role == "viewer":
         st.error("🔒 Acesso Restrito - Modo de Visualização Gerencial (Apenas Leitura)")
     else:
+        # --- ⚡ CORREÇÃO: GATILHO DE LIMPEZA DO FORMULÁRIO (No topo, antes de renderizar) ---
+        if st.session_state.get('limpar_form_lancamento', False):
+            st.session_state['colab_sel_box'] = "- Selecione -"
+            st.session_state['tipo_ap_radio'] = "Produção Normal"
+            st.session_state['so_sel_box'] = "- Selecione -"
+            st.session_state['wo_sel_box'] = "Não Vinculada"
+            st.session_state['unidade_sel_box'] = "Geral"
+            st.session_state['obs_input'] = ""
+            st.session_state['motivo_desvio_input'] = ""
+            if 'linha_apontamento_box' in st.session_state:
+                st.session_state['linha_apontamento_box'] = "- Selecione -"
+            
+            # Desliga o gatilho após limpar
+            st.session_state['limpar_form_lancamento'] = False
+        # -----------------------------------------------------------------------------------
+        
         if 'data_lan_input' not in st.session_state:
             st.session_state.data_lan_input = date.today()
         
@@ -688,7 +704,7 @@ if menu_selecionado == "📝 Lançamentos":
                     if pd.notna(resultado_linha) and str(resultado_linha).strip() != "":
                         linha_colab = resultado_linha
 
-                # NOVO: Campo visível para o líder alterar a linha real de trabalho
+                # NOVO: Campo visível com KEY para permitir limpeza nativa
                 linha_apontamento = st.selectbox(
                     "🏭 Linha de Atuação (Neste Apontamento)", 
                     options=["- Selecione -"] + linhas_disponiveis,
@@ -795,7 +811,7 @@ if menu_selecionado == "📝 Lançamentos":
                         st.warning("⚠️ **Aviso de PCP:** Esta Ordem de Produção (WO) não está no seu planejamento (Gantt) para hoje.")
                         motivo_desvio = st.text_input("Justificativa para Apontamento Extra-Plano (Obrigatório):", key="motivo_desvio_input")
 
-            if st.button("💾 SALVAR APONTAMENTO", type="primary", width="stretch"):
+            if st.button("💾 SALVAR APONTAMENTO", type="primary", use_container_width=True):
                 if colab_sel == "- Selecione -":
                     st.error("❌ Selecione um operador.")
                 else:
@@ -827,7 +843,6 @@ if menu_selecionado == "📝 Lançamentos":
                             nome_antes = f"{timestamp}_{so_id_db}_ANTES.jpg"
                             nome_depois = f"{timestamp}_{so_id_db}_DEPOIS.jpg"
                             
-                            # 1. Faz o upload da foto em bytes direto para o seu Bucket
                             tipo_mime_antes = "image/png" if foto_antes.name.lower().endswith('.png') else "image/jpeg"
                             supabase_client.storage.from_("fotos_retrabalho").upload(
                                 file=foto_antes.getvalue(), 
@@ -842,7 +857,6 @@ if menu_selecionado == "📝 Lançamentos":
                                 file_options={"content-type": tipo_mime_depois}
                             )
                             
-                            # 2. Pega a URL pública permanente gerada pelo Supabase
                             path_f_antes = supabase_client.storage.from_("fotos_retrabalho").get_public_url(nome_antes)
                             path_f_depois = supabase_client.storage.from_("fotos_retrabalho").get_public_url(nome_depois)
                         
@@ -868,30 +882,8 @@ if menu_selecionado == "📝 Lançamentos":
                         
                         time_sys.sleep(1.5)
                         
-                        # Limpa TODOS os campos apagando suas chaves da sessão (Força o reset visual)
-                        chaves_limpar = [
-                            'colab_sel_box', 
-                            'linha_apontamento_box',
-                            'tipo_ap_radio', 
-                            'so_sel_box', 
-                            'wo_sel_box', 
-                            'unidade_sel_box', 
-                            'obs_input', 
-                            'motivo_desvio_input',
-                            'hi_input', 
-                            'hf_input', 
-                            't_erro_box', 
-                            'c_erro_box', 
-                            'atividade_box_parada', 
-                            'atividade_box_falta',
-                            'foto_uploader_antes', 
-                            'foto_uploader_depois'
-                        ]
-                        
-                        for key in chaves_limpar:
-                            if key in st.session_state:
-                                del st.session_state[key]
-                        
+                        # Aciona a rotina segura de limpeza de formulário
+                        st.session_state['limpar_form_lancamento'] = True
                         st.rerun()
 
         # ==========================================
