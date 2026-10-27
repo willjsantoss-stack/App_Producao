@@ -693,7 +693,8 @@ if menu_selecionado == "📝 Lançamentos":
                     "🏭 Linha de Atuação (Neste Apontamento)", 
                     options=["- Selecione -"] + linhas_disponiveis,
                     index=linhas_disponiveis.index(linha_colab) + 1 if linha_colab in linhas_disponiveis else 0,
-                    help="O sistema sugere a linha de RH do operador, mas pode alterá-la caso ele esteja a cobrir outro setor."
+                    help="O sistema sugere a linha de RH do operador, mas pode alterá-la caso ele esteja a cobrir outro setor.",
+                    key="linha_apontamento_box"
                 )
 
                 if tipo_ap in ["Produção Normal", "Retrabalho", "Parada"]:
@@ -867,76 +868,30 @@ if menu_selecionado == "📝 Lançamentos":
                         
                         time_sys.sleep(1.5)
                         
-                        # Correção Definitiva: Apagar as chaves força o Streamlit a recriar os campos vazios
+                        # Limpa TODOS os campos apagando suas chaves da sessão (Força o reset visual)
                         chaves_limpar = [
-                            'colab_sel_box', 'tipo_ap_radio', 'so_sel_box', 
-                            'wo_sel_box', 'unidade_sel_box', 'obs_input',
-                            'hi_input', 'hf_input', 't_erro_box', 'c_erro_box', 
-                            'foto_uploader_antes', 'foto_uploader_depois', 
-                            'motivo_desvio_input', 'atividade_box_parada', 
-                            'atividade_box_falta'
+                            'colab_sel_box', 
+                            'linha_apontamento_box',
+                            'tipo_ap_radio', 
+                            'so_sel_box', 
+                            'wo_sel_box', 
+                            'unidade_sel_box', 
+                            'obs_input', 
+                            'motivo_desvio_input',
+                            'hi_input', 
+                            'hf_input', 
+                            't_erro_box', 
+                            'c_erro_box', 
+                            'atividade_box_parada', 
+                            'atividade_box_falta',
+                            'foto_uploader_antes', 
+                            'foto_uploader_depois'
                         ]
                         
                         for key in chaves_limpar:
                             if key in st.session_state:
                                 del st.session_state[key]
-                            
-                        st.rerun()
-
-        # ==========================================
-        # LANÇAMENTO COLETIVO (S&OP / BANCO DE HORAS)
-        # ==========================================
-        st.markdown("---")
-        st.markdown("### ⚡ Lançamento Coletivo (Desconto de Banco de Horas)")
-        with st.expander("Aplicar saída antecipada ou banco de horas para múltiplos operadores de uma vez", expanded=False):
-            st.info("Utilize este painel quando precisar dispensar a fábrica ou uma linha inteira mais cedo. O sistema calculará o débito negativo automaticamente para todos os ativos no setor selecionado.")
-            
-            c_lote1, c_lote2, c_lote3 = st.columns(3)
-            data_lote = c_lote1.date_input("Data da Ação", date.today(), format="DD/MM/YYYY")
-            linhas_unicas = df_colab['linha'].dropna().unique().tolist()
-            linha_lote = c_lote2.selectbox("Setor Afetado", ["- Todos os Setores (Fábrica Inteira) -"] + linhas_unicas)
-            
-            _, _, hs_sq_lote, hs_sx_lote = obter_parametros_dia(conn, data_lote)
-            try:
-                hora_padrao_fim = datetime.strptime(hs_sx_lote if data_lote.weekday() == 4 else hs_sq_lote, "%H:%M").time()
-            except:
-                hora_padrao_fim = time(15,0) if data_lote.weekday() == 4 else time(17,5)
-            
-            hi_lote = c_lote1.time_input("Início da Ausência (A partir de que horas não trabalharam?)", time(15,40) if data_lote.weekday() <= 3 else time(11,30), step=60)
-            hf_lote = c_lote2.time_input("Fim da Ausência (Horário que o turno encerraria)", hora_padrao_fim, step=60)
-            motivo_lote = c_lote3.text_input("Motivo", "Saída antecipada por baixa demanda S&OP")
-            
-            if st.button("🚀 Processar Desconto de Banco de Horas em Lote", type="primary", width="stretch"):
-                if hi_lote >= hf_lote:
-                    st.error("A hora de início deve ser menor que a hora de término.")
-                else:
-                    if linha_lote == "- Todos os Setores (Fábrica Inteira) -":
-                        ops_afetados = df_colab
-                    else:
-                        ops_afetados = df_colab[df_colab['linha'] == linha_lote]
                         
-                    if ops_afetados.empty:
-                        st.warning("Nenhum operador ativo encontrado para este filtro.")
-                    else:
-                        progresso = st.progress(0)
-                        total_ops = len(ops_afetados)
-                        data_br_lote = data_lote.strftime("%d/%m/%Y")
-                        horas_desconto = calcular_horas_uteis_puras(hi_lote, hf_lote, data_lote)
-                        
-                        for i, (_, row_op) in enumerate(ops_afetados.iterrows()):
-                            resolver_sobreposicoes(conn, row_op['matricula'], data_br_lote, hi_lote, hf_lote, data_lote)
-                            
-                            cursor.execute('''INSERT INTO apontamentos (data_registro, matricula, operador, linha, so, customer, wo, product_name, unidade, atividade, tipo, tipo_erro, causador_erro, hora_inicio, hora_fim, horas_normais, he_50, he_100, saldo_bh, descricao, foto_path, foto_depois_path) 
-                                              VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,0,0,0,0,%s,%s,%s)''',
-                                           (data_br_lote, row_op['matricula'], row_op['nome'], row_op['linha'], "N/A", "N/A", "N/A", "N/A", "Geral", "Banco de Horas", "Falta/Atraso", "N/A", "N/A", str(hi_lote), str(hf_lote), motivo_lote, "", ""))
-                            conn.commit()
-                            
-                            registrar_evento_banco(row_op['matricula'], data_br_lote, -round(horas_desconto, 2), "DEBITO_LOTE", motivo_lote)
-                            recalcular_dia(conn, row_op['matricula'], data_br_lote)
-                            progresso.progress((i + 1) / total_ops)
-                            
-                        st.success(f"✔️ Lote concluído! Banco de Horas deduzido para {total_ops} funcionários.")
-                        time_sys.sleep(2.0)
                         st.rerun()
 
         # ==========================================
