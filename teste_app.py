@@ -1210,7 +1210,7 @@ elif menu_selecionado == "📊 Dash. Projetos":
 
     with st.expander(f"Ver / Exportar Histórico de Apontamentos - {so_dash_sel}", expanded=False):
         df_kardex = pd.read_sql_query("""
-            SELECT data_registro, operador, wo, unidade, atividade, tipo, tipo_erro, causador_erro,
+            SELECT data_registro, operador, wo, unidade, atividade, linha, tipo, tipo_erro, causador_erro,
                    (horas_normais + he_50 + he_100) AS res_h, descricao
             FROM apontamentos
             WHERE so = %(so)s
@@ -1224,6 +1224,7 @@ elif menu_selecionado == "📊 Dash. Projetos":
                 'wo': 'Work Order (WO)',
                 'unidade': 'Unidade',
                 'atividade': 'Atividade / Setor',
+                'linha': 'Linha de Atuação', # <--- NOVA COLUNA AQUI
                 'tipo': 'Tipo de Apontamento',
                 'tipo_erro': 'Tipo de Erro',
                 'causador_erro': 'Causador',
