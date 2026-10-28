@@ -4022,7 +4022,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                     float(plan_oh), float(real_oh), float(delta_oh),
                     float(plan_mat), float(real_mat), float(delta_mat),
                     texto_justificativa
-                ))
+                ), prepare=False) # <--- CORREÇÃO: prepare=False adicionado
                 
                 # 3. GRAVAÇÃO MICRO (Itens detalhados com desvio)
                 df_gravar = df_final[df_final['Status'].str.contains('Consumo Excedente|Consumo Abaixo da Qtd BOM|BOM:|Alerta:')]
@@ -4035,7 +4035,7 @@ elif menu_selecionado == "📊 Auditoria BOM vs Real":
                         r['Item'], r['Descrição'], float(r['qtd_ini']), float(r['Consumption per lot size']), 
                         float(r['Quantity']), float(r['Desvio Engenharia']), float(r['Desvio Fábrica']), 
                         float(r['Impacto Financeiro (R$)']), r['Status'], r['Motivo'], so_salvar, proj_salvar
-                    ))
+                    ), prepare=False) # <--- CORREÇÃO: prepare=False adicionado
                 
                 conn.commit()
                 st.success(f"✔️ Auditoria Completa da SO {so_salvar} gravada com sucesso! (Resumo Financeiro + {len(df_gravar)} itens com desvio)")
