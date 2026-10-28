@@ -695,7 +695,11 @@ if menu_selecionado == "📝 Lançamentos":
             col1, col2 = st.columns(2)
             with col1:
                 linha_colab = "N/A"
+                # Extrai as linhas do RH e força a inclusão do Trabalho de Campo
                 linhas_disponiveis = df_colab['linha'].dropna().unique().tolist()
+                if "Trabalho de Campo" not in linhas_disponiveis:
+                    linhas_disponiveis.append("Trabalho de Campo")
+                linhas_disponiveis.sort() # Organiza por ordem alfabética para facilitar a busca
                 
                 if colab_sel != "- Selecione -":
                     mat_selecionada = colab_sel.split(" - ")[0]
