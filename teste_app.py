@@ -846,18 +846,31 @@ if menu_selecionado == "📝 Lançamentos":
                             nome_antes = f"{timestamp}_{so_id_db}_ANTES.jpg"
                             nome_depois = f"{timestamp}_{so_id_db}_DEPOIS.jpg"
                             
-                            tipo_mime_antes = "image/png" if foto_antes.name.lower().endswith('.png') else "image/jpeg"
+                            # --- FUNÇÃO INTERNA DE COMPRESSÃO DE IMAGEM ---
+                            def comprimir_foto(upload_file):
+                                img = Image.open(upload_file)
+                                if img.mode != 'RGB': img = img.convert('RGB')
+                                img.thumbnail((1024, 1024), Image.Resampling.LANCZOS) # Reduz resolução mantendo proporção
+                                output = io.BytesIO()
+                                img.save(output, format='JPEG', quality=75, optimize=True) # Comprime qualidade para 75%
+                                return output.getvalue()
+                            # ----------------------------------------------
+                            
+                            # Faz a compressão antes do upload
+                            bytes_antes = comprimir_foto(foto_antes)
+                            bytes_depois = comprimir_foto(foto_depois)
+                            
+                            # Envia os bytes comprimidos para o Supabase
                             supabase_client.storage.from_("fotos_retrabalho").upload(
-                                file=foto_antes.getvalue(), 
+                                file=bytes_antes, 
                                 path=nome_antes, 
-                                file_options={"content-type": tipo_mime_antes}
+                                file_options={"content-type": "image/jpeg"}
                             )
                             
-                            tipo_mime_depois = "image/png" if foto_depois.name.lower().endswith('.png') else "image/jpeg"
                             supabase_client.storage.from_("fotos_retrabalho").upload(
-                                file=foto_depois.getvalue(), 
+                                file=bytes_depois, 
                                 path=nome_depois, 
-                                file_options={"content-type": tipo_mime_depois}
+                                file_options={"content-type": "image/jpeg"}
                             )
                             
                             path_f_antes = supabase_client.storage.from_("fotos_retrabalho").get_public_url(nome_antes)
