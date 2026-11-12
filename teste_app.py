@@ -1423,10 +1423,14 @@ elif menu_selecionado == "👥 Dash. RH":
         
         if not df_ponto_final.empty:
             df_ponto_final.set_index('Operador', inplace=True)
+            
+            # Filtra apenas as colunas que são efetivamente dias (evitando a coluna "linha" que dá KeyError)
+            colunas_dias = [d.strftime("%d/%m") for d in dias_mes if d.strftime("%d/%m") in df_ponto_final.columns]
+            
             try:
-                styled_df = df_ponto_final.style.map(color_ponto, subset=[d.strftime("%d/%m") for d in dias_mes if d.strftime("%d/%m") in df_ponto_final.columns])
+                styled_df = df_ponto_final.style.map(color_ponto, subset=colunas_dias)
             except AttributeError:
-                styled_df = df_ponto_final.style.applymap(color_ponto, subset=[d.strftime("%d/%m") for d in dias_mes if d.strftime("%d/%m") in df_ponto_final.columns])
+                styled_df = df_ponto_final.style.applymap(color_ponto, subset=colunas_dias)
             st.dataframe(styled_df, width="stretch")
 
         st.markdown("---")
