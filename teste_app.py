@@ -3359,7 +3359,7 @@ elif menu_selecionado == "🔍 Manutenção":
 # ------------------------------------------
 # ABA: RELATÓRIOS PDF 
 # ------------------------------------------
-elif menu_selecionado == "📑 Relatórios PDF":
+elif menu_selecionado == "📑 Relatórios PDF Retrabalhos":
     if user_role == "viewer":
         st.error("🔒 Acesso Restrito - Modo de Visualização Gerencial (Apenas Leitura)")
     else:
