@@ -577,7 +577,7 @@ with st.sidebar:
             st.download_button(label="📥 Baixar Excel Processado", data=st.session_state['excel_ponto_pronto'], file_name=st.session_state['excel_ponto_nome'], mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
 
     with st.expander("🏦 Extrato Banco de Horas (Excel)"):
-        st.write("Consulte horas geradas (crédito) e horas de folga/em casa (débito) no período.")
+        st.write("Consulte horas geradas (crédito), folgas (débito) e o saldo agregado no período.")
         
         df_colabs_bh = pd.read_sql_query(
             "SELECT matricula, nome FROM colaboradores ORDER BY nome", engine
@@ -594,6 +594,11 @@ with st.sidebar:
         )
         dt_fim_bh = st.date_input(
             "Data Fim:", value=hoje_bh, format="DD/MM/YYYY", key="dt_fim_bh_rel"
+        )
+        incluir_outras_faltas = st.checkbox(
+            "Incluir outras faltas/atrasos (sem impacto no BH)",
+            value=False,
+            key="chk_outras_faltas_bh"
         )
         
         if st.button("🔄 Gerar Relatório de BH", use_container_width=True, key="btn_gerar_bh_rel"):
@@ -630,47 +635,81 @@ with st.sidebar:
                         df_bh_fil = pd.DataFrame()
                     
                     if not df_bh_fil.empty:
-                        def calc_credito_bh(r):
-                            val_bh = float(r['saldo_bh'] or 0.0)
-                            # Crédito real: horas extras acumuladas ou sábado trabalhado (saldo positivo)
-                            if val_bh > 0 and 'Banco de Horas' not in str(r['atividade']):
-                                return round(val_bh, 2)
-                            return 0.0
-
-                        def calc_debito_bh(r):
+                        def calc_movimento_bh(r):
                             val_bh = float(r['saldo_bh'] or 0.0)
                             h_norm = float(r['horas_normais'] or 0.0)
-                            # Débito: colaborador dispensado / deixado em casa por Banco de Horas
+                            # Crédito (positivo): horas extras acumuladas ou sábado trabalhado
+                            if val_bh > 0 and 'Banco de Horas' not in str(r['atividade']):
+                                return round(val_bh, 2)
+                            # Débito (negativo): colaborador dispensado / em casa por Banco de Horas
                             if val_bh < 0:
-                                return round(abs(val_bh), 2)
-                            elif 'Banco de Horas' in str(r['atividade']) and h_norm > 0:
-                                return round(h_norm, 2)
+                                return round(val_bh, 2)
+                            if 'Banco de Horas' in str(r['atividade']) and h_norm > 0:
+                                return -round(h_norm, 2)
                             return 0.0
 
-                        df_bh_fil['Gerado / Crédito (h)'] = df_bh_fil.apply(calc_credito_bh, axis=1)
-                        df_bh_fil['Em Casa / Débito (h)'] = df_bh_fil.apply(calc_debito_bh, axis=1)
+                        df_bh_fil['Horas Banco no Dia (h)'] = df_bh_fil.apply(calc_movimento_bh, axis=1)
                         
-                        # Mantém apenas registros que efetivamente movimentaram o Banco de Horas
-                        df_bh_mov = df_bh_fil[
-                            (df_bh_fil['Gerado / Crédito (h)'] > 0) |
-                            (df_bh_fil['Em Casa / Débito (h)'] > 0)
-                        ].copy()
+                        # Filtra movimentações de BH (e opcionalmente outras faltas/atrasos)
+                        if incluir_outras_faltas:
+                            mask_mov = (
+                                (df_bh_fil['Horas Banco no Dia (h)'] != 0) |
+                                (df_bh_fil['tipo'].isin(['Falta/Atraso', 'Atestado / Justificada']))
+                            )
+                        else:
+                            mask_mov = df_bh_fil['Horas Banco no Dia (h)'] != 0
+
+                        df_bh_mov = df_bh_fil[mask_mov].copy()
                         
                         if not df_bh_mov.empty:
-                            df_bh_mov['Saldo Registro (h)'] = (
-                                df_bh_mov['Gerado / Crédito (h)'] - df_bh_mov['Em Casa / Débito (h)']
-                            ).round(2)
+                            # Ordenação cronológica obrigatória antes de calcular o acumulado
+                            df_bh_mov = df_bh_mov.sort_values(
+                                by=['operador', 'matricula', 'data_dt', 'hora_inicio']
+                            ).reset_index(drop=True)
                             
-                            # Aba 1: Resumo Consolidado por Colaborador
+                            # Cálculo do Saldo Agregado (acumulado dia a dia por colaborador)
+                            df_bh_mov['Saldo Agregado (h)'] = (
+                                df_bh_mov.groupby('matricula')['Horas Banco no Dia (h)']
+                                .cumsum()
+                                .round(2)
+                            )
+                            
+                            # Colunas auxiliares para o Resumo Consolidado
+                            df_bh_mov['Gerado / Crédito (h)'] = df_bh_mov['Horas Banco no Dia (h)'].apply(
+                                lambda x: x if x > 0 else 0.0
+                            )
+                            df_bh_mov['Em Casa / Débito (h)'] = df_bh_mov['Horas Banco no Dia (h)'].apply(
+                                lambda x: abs(x) if x < 0 else 0.0
+                            )
+                            df_bh_mov['descricao'] = df_bh_mov['descricao'].fillna("")
+                            
+                            # Aba 1: Extrato Detalhado Dia a Dia (com as colunas solicitadas)
+                            df_bh_detalhe = df_bh_mov[[
+                                'matricula', 'operador', 'data_registro', 'tipo',
+                                'atividade', 'descricao', 'Horas Banco no Dia (h)',
+                                'Saldo Agregado (h)'
+                            ]].rename(columns={
+                                'matricula': 'Matrícula',
+                                'operador': 'Operador',
+                                'data_registro': 'Data',
+                                'tipo': 'Falta ou Atraso',
+                                'atividade': 'Classificação da Ausência',
+                                'descricao': 'Observações'
+                            })
+                            
+                            # Aba 2: Resumo Consolidado por Colaborador
                             df_bh_resumo = df_bh_mov.groupby(['matricula', 'operador'], as_index=False).agg({
                                 'Gerado / Crédito (h)': 'sum',
                                 'Em Casa / Débito (h)': 'sum',
-                                'Saldo Registro (h)': 'sum'
+                                'Horas Banco no Dia (h)': 'sum'
                             }).rename(columns={
                                 'matricula': 'Matrícula',
                                 'operador': 'Operador',
-                                'Saldo Registro (h)': 'Saldo Líquido (h)'
+                                'Horas Banco no Dia (h)': 'Saldo Líquido (h)'
                             })
+                            
+                            for col_num in ['Gerado / Crédito (h)', 'Em Casa / Débito (h)', 'Saldo Líquido (h)']:
+                                df_bh_resumo[col_num] = df_bh_resumo[col_num].round(2)
                             
                             tot_gerado = round(df_bh_resumo['Gerado / Crédito (h)'].sum(), 2)
                             tot_em_casa = round(df_bh_resumo['Em Casa / Débito (h)'].sum(), 2)
@@ -685,26 +724,17 @@ with st.sidebar:
                             }])
                             df_bh_resumo = pd.concat([df_bh_resumo, linha_total], ignore_index=True)
                             
-                            # Aba 2: Extrato Detalhado Dia a Dia
-                            df_bh_detalhe = df_bh_mov.sort_values(by=['operador', 'data_dt', 'hora_inicio'])[
-                                ['data_registro', 'matricula', 'operador', 'hora_inicio', 'hora_fim',
-                                 'tipo', 'atividade', 'Gerado / Crédito (h)', 'Em Casa / Débito (h)',
-                                 'Saldo Registro (h)', 'descricao']
-                            ].rename(columns={
-                                'data_registro': 'Data',
-                                'matricula': 'Matrícula',
-                                'operador': 'Operador',
-                                'hora_inicio': 'Início',
-                                'hora_fim': 'Fim',
-                                'tipo': 'Tipo',
-                                'atividade': 'Atividade',
-                                'descricao': 'Observações'
-                            })
-                            
                             output_bh = io.BytesIO()
                             with pd.ExcelWriter(output_bh, engine='openpyxl') as writer:
+                                df_bh_detalhe.to_excel(writer, index=False, sheet_name='Detalhado_BH')
                                 df_bh_resumo.to_excel(writer, index=False, sheet_name='Resumo_BH')
-                                df_bh_detalhe.to_excel(writer, index=False, sheet_name='Detalhado_Dia_a_Dia')
+                                
+                                # Ajuste automático de largura das colunas nas duas abas
+                                for sheet_name in writer.sheets:
+                                    ws = writer.sheets[sheet_name]
+                                    for col in ws.columns:
+                                        max_len = max(len(str(cell.value or "")) for cell in col)
+                                        ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 50)
                             
                             st.session_state['excel_bh_pronto'] = output_bh.getvalue()
                             st.session_state['excel_bh_nome'] = (
@@ -714,7 +744,7 @@ with st.sidebar:
                         else:
                             st.session_state.pop('excel_bh_pronto', None)
                             st.session_state.pop('resumo_bh_tela', None)
-                            st.warning("Nenhuma movimentação de Banco de Horas neste período.")
+                            st.warning("Nenhuma movimentação encontrada neste período.")
                     else:
                         st.session_state.pop('excel_bh_pronto', None)
                         st.session_state.pop('resumo_bh_tela', None)
